@@ -1,0 +1,6 @@
+framework module Pods_googlemap_navigation_googlemap_navigationUITests {
+  umbrella header "Pods-googlemap_navigation-googlemap_navigationUITests-umbrella.h"
+
+  export *
+  module * { export * }
+}

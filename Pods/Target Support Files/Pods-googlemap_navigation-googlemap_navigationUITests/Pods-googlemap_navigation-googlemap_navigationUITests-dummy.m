@@ -1,0 +1,5 @@
+#import <Foundation/Foundation.h>
+@interface PodsDummy_Pods_googlemap_navigation_googlemap_navigationUITests : NSObject
+@end
+@implementation PodsDummy_Pods_googlemap_navigation_googlemap_navigationUITests
+@end
