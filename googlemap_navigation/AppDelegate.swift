@@ -1,9 +1,3 @@
-//
-//  AppDelegate.swift
-//  googlemap_navigation
-//
-//  Created by 赵韩雪 on 27/04/2025.
-//
 
 import UIKit
 

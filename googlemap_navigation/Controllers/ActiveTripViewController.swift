@@ -62,7 +62,11 @@ class ActiveTripViewController: UIViewController, CLLocationManagerDelegate, GMS
         
         // Setup map view
         let camera = GMSCameraPosition.camera(withLatitude: 0, longitude: 0, zoom: 15)
-        mapView = GMSMapView.map(withFrame: view.bounds, camera: camera)
+        let options = GMSMapViewOptions()
+        options.camera = camera
+        mapView = GMSMapView(options: options)
+
+        mapView.camera = camera
         mapView.delegate = self
         mapView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(mapView)
