@@ -1,8 +1,9 @@
 import UIKit
 import GoogleMaps
+import GooglePlaces
 import CoreLocation
 
-class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate {
+class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate{
 
     private let locationManager = CLLocationManager()
     private var mapView: GMSMapView!
@@ -106,6 +107,44 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
     }
+    
+    // Mark : - add search suggestion
+    func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
+        let autocompleteController = GMSAutocompleteViewController()
+        autocompleteController.delegate = self
+
+ 
+        let filter = GMSAutocompleteFilter()
+        filter.type = .address
+        autocompleteController.autocompleteFilter = filter
+
+        if textField == startTextField {
+            autocompleteController.view.tag = 1
+        } else if textField == destinationTextField {
+            autocompleteController.view.tag = 2
+        }
+
+        present(autocompleteController, animated: true, completion: nil)
+        return false
+    }
+    func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) {
+        if viewController.view.tag == 1 {
+            startTextField.text = place.formattedAddress
+            currentLocation = place.coordinate
+        } else if viewController.view.tag == 2 {
+            destinationTextField.text = place.formattedAddress
+        }
+        dismiss(animated: true, completion: nil)
+    }
+
+    func viewController(_ viewController: GMSAutocompleteViewController, didFailAutocompleteWithError error: Error) {
+        print("Error: ", error.localizedDescription)
+        dismiss(animated: true, completion: nil)
+    }
+
+    func wasCancelled(_ viewController: GMSAutocompleteViewController) {
+        dismiss(animated: true, completion: nil)
+    }
 
     // MARK: - Keyboard handling
     @objc private func keyboardWillShow(_ notification: Notification) {
@@ -134,7 +173,12 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.first else { return }
         currentLocation = location.coordinate
-        startTextField.text = "Current Location"
+        if startTextField.text?.isEmpty ?? true {
+            startTextField.text = "Current Location"
+        }
+        if currentLocation == nil {
+            currentLocation = location.coordinate
+        }
         let camera = GMSCameraPosition.camera(withLatitude: location.coordinate.latitude, longitude: location.coordinate.longitude, zoom: 12)
         mapView.animate(to: camera)
 
