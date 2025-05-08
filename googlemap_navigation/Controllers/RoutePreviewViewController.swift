@@ -8,9 +8,10 @@ class RoutePreviewViewController: UIViewController {
     private var mapView: GMSMapView!
     
     private let travelModeSegmentedControl: UISegmentedControl = {
-        let items = ["Walking", "Cycling", "Driving"]
+        let items = ["Transit"]
         let control = UISegmentedControl(items: items)
         control.selectedSegmentIndex = 0
+        control.isEnabled = false
         control.translatesAutoresizingMaskIntoConstraints = false
         return control
     }()
@@ -127,18 +128,14 @@ class RoutePreviewViewController: UIViewController {
     
     private func fetchRoute(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) {
         let apiKey = "AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
-        let mode: String
-        switch travelModeSegmentedControl.selectedSegmentIndex {
-        case 0: mode = "walking"
-        case 1: mode = "bicycling"
-        case 2: mode = "driving"
-        default: mode = "driving"
-        }
-        let urlStr = "https://maps.googleapis.com/maps/api/directions/json?origin=\(from.latitude),\(from.longitude)&destination=\(to.latitude),\(to.longitude)&mode=\(mode)&key=\(apiKey)"
+        
+        let urlStr = "https://maps.googleapis.com/maps/api/directions/json?origin=\(from.latitude),\(from.longitude)&destination=\(to.latitude),\(to.longitude)&mode=transit&transit_mode=subway|train&key=\(apiKey)"
+        
         guard let url = URL(string: urlStr) else { return }
         
         URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-            guard let data = data,
+            guard let self = self,
+                  let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let routes = json["routes"] as? [[String: Any]],
                   let route = routes.first,
@@ -146,19 +143,40 @@ class RoutePreviewViewController: UIViewController {
                   let points = overviewPolyline["points"] as? String,
                   let legs = route["legs"] as? [[String: Any]],
                   let leg = legs.first,
-                  let duration = leg["duration"] as? [String: Any],
-                  let durationText = duration["text"] as? String else {
+                  let steps = leg["steps"] as? [[String: Any]] else {
                 DispatchQueue.main.async {
                     self?.estimatedTimeLabel.text = "Estimated Time: --"
                 }
                 return
             }
+            
+            var walkingMinutes: Double = 0
+            var transitMinutes: Double = 0
+            
+            for step in steps {
+                if let travelMode = step["travel_mode"] as? String,
+                   let duration = step["duration"] as? [String: Any],
+                   let durationValue = duration["value"] as? Double {
+                    let minutes = durationValue / 60.0
+                    if travelMode == "WALKING" {
+                        walkingMinutes += minutes
+                    } else {
+                        transitMinutes += minutes
+                    }
+                }
+            }
+            
+            let speedMultiplier = Double(self.speedSlider.value)
+            let adjustedWalking = walkingMinutes / speedMultiplier
+            let totalAdjusted = adjustedWalking + transitMinutes
+            
             DispatchQueue.main.async {
-                self?.drawPath(from: points)
-                self?.updateEstimatedTime(durationText: durationText)
+                self.drawPath(from: points)
+                self.estimatedTimeLabel.text = String(format: "Estimated Time: %.0f min", totalAdjusted)
             }
         }.resume()
     }
+
     
     private func drawPath(from polyStr: String) {
         let path = GMSPath(fromEncodedPath: polyStr)
@@ -178,52 +196,6 @@ class RoutePreviewViewController: UIViewController {
         }
     }
     
-    private func updateEstimatedTime(durationText: String) {
-        let speedMultiplier = Double(speedSlider.value)
-        var totalMinutes: Double = 0
-        print("Duration from API: \(durationText)")
-
-        let components = durationText.lowercased().components(separatedBy: " ")
-        print("Parsed components: \(components)")
-
-        if durationText.contains("分钟") {
-                   if let minutes = Double(durationText.replacingOccurrences(of: "分钟", with: "").trimmingCharacters(in: .whitespaces)) {
-                       totalMinutes = minutes
-                   }
-        } else {
-            // Handle English format
-            let components = durationText.lowercased().components(separatedBy: " ")
-            print("Parsed components: \(components)")
-            
-            var i = 0
-            while i < components.count {
-                if let value = Double(components[i]) {
-                    let unit = components[safe: i + 1] ?? ""
-                    if unit.contains("hour") {
-                        totalMinutes += value * 60
-                    } else if unit.contains("min") {
-                        totalMinutes += value
-                    }
-                    i += 2
-                } else {
-                    i += 1
-                }
-            }
-        }
-
-        guard totalMinutes > 0 else {
-            estimatedTimeLabel.text = "Estimated Time: --"
-            return
-        }
-
-        let adjustedMinutes = totalMinutes / speedMultiplier
-        let displayText = String(format: "Estimated Time: %.0f min", adjustedMinutes)
-        estimatedTimeLabel.text = displayText
-    }
-
+    
 }
-extension Array {
-    subscript(safe index: Int) -> Element? {
-        return indices.contains(index) ? self[index] : nil
-    }
-}
+
