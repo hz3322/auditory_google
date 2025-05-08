@@ -119,7 +119,7 @@ class RoutePreviewViewController: UIViewController {
         let startMarker = GMSMarker(position: start)
         startMarker.title = "Start"
         startMarker.map = mapView
-
+        
         let endMarker = GMSMarker(position: end)
         endMarker.title = "Destination"
         endMarker.map = mapView
@@ -136,7 +136,7 @@ class RoutePreviewViewController: UIViewController {
         }
         let urlStr = "https://maps.googleapis.com/maps/api/directions/json?origin=\(from.latitude),\(from.longitude)&destination=\(to.latitude),\(to.longitude)&mode=\(mode)&key=\(apiKey)"
         guard let url = URL(string: urlStr) else { return }
-
+        
         URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -166,7 +166,7 @@ class RoutePreviewViewController: UIViewController {
         polyline.strokeWidth = 5
         polyline.strokeColor = .systemBlue
         polyline.map = mapView
-
+        
         // Adjust camera to fit route
         if let path = path {
             var bounds = GMSCoordinateBounds()
@@ -179,12 +179,51 @@ class RoutePreviewViewController: UIViewController {
     }
     
     private func updateEstimatedTime(durationText: String) {
-        // Adjust for speed slider
         let speedMultiplier = Double(speedSlider.value)
-        let durationValue = Double(durationText.components(separatedBy: " ").first ?? "") ?? 0
-        let unit = durationText.contains("hour") ? 60.0 : 1.0
-        let adjustedMinutes = durationValue / speedMultiplier * unit
+        var totalMinutes: Double = 0
+        print("Duration from API: \(durationText)")
+
+        let components = durationText.lowercased().components(separatedBy: " ")
+        print("Parsed components: \(components)")
+
+        if durationText.contains("分钟") {
+                   if let minutes = Double(durationText.replacingOccurrences(of: "分钟", with: "").trimmingCharacters(in: .whitespaces)) {
+                       totalMinutes = minutes
+                   }
+        } else {
+            // Handle English format
+            let components = durationText.lowercased().components(separatedBy: " ")
+            print("Parsed components: \(components)")
+            
+            var i = 0
+            while i < components.count {
+                if let value = Double(components[i]) {
+                    let unit = components[safe: i + 1] ?? ""
+                    if unit.contains("hour") {
+                        totalMinutes += value * 60
+                    } else if unit.contains("min") {
+                        totalMinutes += value
+                    }
+                    i += 2
+                } else {
+                    i += 1
+                }
+            }
+        }
+
+        guard totalMinutes > 0 else {
+            estimatedTimeLabel.text = "Estimated Time: --"
+            return
+        }
+
+        let adjustedMinutes = totalMinutes / speedMultiplier
         let displayText = String(format: "Estimated Time: %.0f min", adjustedMinutes)
         estimatedTimeLabel.text = displayText
+    }
+
+}
+extension Array {
+    subscript(safe index: Int) -> Element? {
+        return indices.contains(index) ? self[index] : nil
     }
 }
