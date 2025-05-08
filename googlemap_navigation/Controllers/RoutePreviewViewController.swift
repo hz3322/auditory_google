@@ -17,8 +17,8 @@ class RoutePreviewViewController: UIViewController {
     
     private let speedSlider: UISlider = {
         let slider = UISlider()
-        slider.minimumValue = 0.5
-        slider.maximumValue = 2.0
+        slider.minimumValue = 0.6
+        slider.maximumValue = 1.4
         slider.value = 1.0
         slider.translatesAutoresizingMaskIntoConstraints = false
         return slider
