@@ -2,7 +2,8 @@ import UIKit
 import GoogleMaps
 import CoreLocation
 
-class HomeViewController: UIViewController, CLLocationManagerDelegate {
+class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate {
+
     private let locationManager = CLLocationManager()
     private var mapView: GMSMapView!
     private var currentLocation: CLLocationCoordinate2D?
@@ -11,6 +12,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate {
         let tf = UITextField()
         tf.placeholder = "Start Point"
         tf.borderStyle = .roundedRect
+        tf.returnKeyType = .done
         tf.translatesAutoresizingMaskIntoConstraints = false
         return tf
     }()
@@ -19,6 +21,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate {
         let tf = UITextField()
         tf.placeholder = "Enter Destination"
         tf.borderStyle = .roundedRect
+        tf.returnKeyType = .done
         tf.translatesAutoresizingMaskIntoConstraints = false
         return tf
     }()
@@ -37,20 +40,21 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate {
         super.viewDidLoad()
         view.backgroundColor = .white
         title = "Home"
+
         setupMap()
         setupFields()
-        setupLocationManager()
         setupButton()
+        setupLocationManager()
+        setupKeyboardNotifications()
+
+        // Set text field delegates
+        startTextField.delegate = self
+        destinationTextField.delegate = self
     }
 
     private func setupMap() {
         let camera = GMSCameraPosition.camera(withLatitude: 0, longitude: 0, zoom: 12)
-        let options = GMSMapViewOptions()
-        options.camera = camera
-        mapView = GMSMapView(options: options)
-
-        mapView.camera = camera
-
+        mapView = GMSMapView(frame: .zero, camera: camera)
         mapView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(mapView)
 
@@ -78,7 +82,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate {
             destinationTextField.heightAnchor.constraint(equalToConstant: 44)
         ])
     }
-    
+
     private func setupButton() {
         view.addSubview(startTripButton)
 
@@ -98,6 +102,34 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate {
         locationManager.startUpdatingLocation()
     }
 
+    private func setupKeyboardNotifications() {
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    // MARK: - Keyboard handling
+    @objc private func keyboardWillShow(_ notification: Notification) {
+        guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        if self.view.frame.origin.y == 0 {
+            self.view.frame.origin.y -= keyboardFrame.height / 2
+        }
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        self.view.frame.origin.y = 0
+    }
+
+    // Dismiss keyboard on return
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        textField.resignFirstResponder()
+        return true
+    }
+
+    // Dismiss keyboard when tapping outside
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        view.endEditing(true)
+    }
+
     // MARK: - CLLocationManagerDelegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.first else { return }
@@ -106,31 +138,30 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate {
         let camera = GMSCameraPosition.camera(withLatitude: location.coordinate.latitude, longitude: location.coordinate.longitude, zoom: 12)
         mapView.animate(to: camera)
 
-        // Add marker for current location
         mapView.clear()
         let marker = GMSMarker(position: location.coordinate)
         marker.title = "Current Location"
         marker.map = mapView
     }
 
+    // MARK: - Trip Navigation
     @objc private func startTripButtonTapped() {
         guard let destinationAddress = destinationTextField.text, !destinationAddress.isEmpty else {
             print("Destination is required.")
             return
         }
-        
+
         let routePreviewVC = RoutePreviewViewController()
-        
+
         if let startAddress = startTextField.text, !startAddress.isEmpty, startAddress != "Current Location" {
-            // User entered a custom start address
             geocodeAddress(startAddress) { [weak self] startCoordinate in
                 guard let startCoord = startCoordinate else {
-                    print("Failed to find start address.")
+                    print("Invalid start address.")
                     return
                 }
                 self?.geocodeAddress(destinationAddress) { destinationCoordinate in
                     guard let destCoord = destinationCoordinate else {
-                        print("Failed to find destination address.")
+                        print("Invalid destination.")
                         return
                     }
                     routePreviewVC.startLocation = startCoord
@@ -139,14 +170,13 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate {
                 }
             }
         } else {
-            // Use current GPS location as start
             guard let currentCoord = currentLocation else {
                 print("Current location not available.")
                 return
             }
             geocodeAddress(destinationAddress) { [weak self] destinationCoordinate in
                 guard let destCoord = destinationCoordinate else {
-                    print("Failed to find destination address.")
+                    print("Invalid destination.")
                     return
                 }
                 routePreviewVC.startLocation = currentCoord
@@ -166,5 +196,4 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate {
             }
         }
     }
-
 }
