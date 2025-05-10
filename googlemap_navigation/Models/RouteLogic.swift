@@ -101,7 +101,6 @@ public final class RouteLogic {
         }
         
         func fetchStopNames(for transit: TransitInfo, completion: @escaping (TransitInfo) -> Void) {
-            // You can split here into different services if needed
             if let lineId = RouteLogic.shared.tflLineId(from: transit.lineName),
                let url = URL(string: "https://api.tfl.gov.uk/Line/\(lineId)/Route/Sequence/inbound") {
                 
