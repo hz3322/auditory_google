@@ -28,6 +28,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }()
 
     private let startTripButton: UIButton = {
+        
         let button = UIButton(type: .system)
         button.setTitle("Start the Trip", for: .normal)
         button.backgroundColor = .systemBlue
@@ -95,6 +96,14 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         ])
 
         startTripButton.addTarget(self, action: #selector(startTripButtonTapped), for: .touchUpInside)
+        updateStartTripButtonState()
+    }
+
+    private func updateStartTripButtonState() {
+        let hasStart = !(startTextField.text?.isEmpty ?? true)
+        let hasDestination = !(destinationTextField.text?.isEmpty ?? true)
+        startTripButton.isEnabled = hasStart && hasDestination
+        startTripButton.alpha = startTripButton.isEnabled ? 1.0 : 0.5
     }
 
     private func setupLocationManager() {
@@ -134,6 +143,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         } else if viewController.view.tag == 2 {
             destinationTextField.text = place.formattedAddress
         }
+        updateStartTripButtonState()
         dismiss(animated: true, completion: nil)
     }
 
@@ -190,53 +200,85 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     // MARK: - Trip Navigation
     @objc private func startTripButtonTapped() {
+        print("Start Trip button tapped")
         guard let destinationAddress = destinationTextField.text, !destinationAddress.isEmpty else {
             print("Destination is required.")
             return
         }
+        print("Destination address: \(destinationAddress)")
 
         let routePreviewVC = RoutePreviewViewController()
+        print("🧭 RoutePreviewViewController created: \(routePreviewVC)")
 
         if let startAddress = startTextField.text, !startAddress.isEmpty, startAddress != "Current Location" {
+            print("Using custom start location: \(startAddress)")
+            // Case 1: Custom start location
             geocodeAddress(startAddress) { [weak self] startCoordinate in
+                print("Geocoded start coordinate: \(String(describing: startCoordinate))")
                 guard let startCoord = startCoordinate else {
                     print("Invalid start address.")
                     return
                 }
                 self?.geocodeAddress(destinationAddress) { destinationCoordinate in
+                    print("Geocoded destination coordinate: \(String(describing: destinationCoordinate))")
                     guard let destCoord = destinationCoordinate else {
                         print("Invalid destination.")
                         return
                     }
                     routePreviewVC.startLocation = startCoord
                     routePreviewVC.destinationLocation = destCoord
-                    self?.navigationController?.pushViewController(routePreviewVC, animated: true)
+                    print("Pushing RoutePreviewViewController")
+                    DispatchQueue.main.async {
+                        self?.navigationController?.pushViewController(routePreviewVC, animated: true)
+                    }
                 }
             }
         } else {
+            print("Using current location as start point")
+            // Case 2: Current location
             guard let currentCoord = currentLocation else {
                 print("Current location not available.")
                 return
             }
+            print("Current coordinate: \(currentCoord)")
             geocodeAddress(destinationAddress) { [weak self] destinationCoordinate in
+                print("Geocoded destination coordinate: \(String(describing: destinationCoordinate))")
                 guard let destCoord = destinationCoordinate else {
                     print("Invalid destination.")
                     return
                 }
                 routePreviewVC.startLocation = currentCoord
                 routePreviewVC.destinationLocation = destCoord
-                self?.navigationController?.pushViewController(routePreviewVC, animated: true)
+                print("Pushing RoutePreviewViewController")
+                DispatchQueue.main.async {
+                    self?.navigationController?.pushViewController(routePreviewVC, animated: true)
+                }
             }
         }
     }
 
     private func geocodeAddress(_ address: String, completion: @escaping (CLLocationCoordinate2D?) -> Void) {
+        print("Starting geocoding for address: \(address)")
         let geocoder = CLGeocoder()
         geocoder.geocodeAddressString(address) { placemarks, error in
+            if let error = error {
+                print("Geocoding error: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    completion(nil)
+                }
+                return
+            }
+            
             if let coordinate = placemarks?.first?.location?.coordinate {
-                completion(coordinate)
+                print("Successfully geocoded address: \(address) to coordinate: \(coordinate)")
+                DispatchQueue.main.async {
+                    completion(coordinate)
+                }
             } else {
-                completion(nil)
+                print("No coordinates found for address: \(address)")
+                DispatchQueue.main.async {
+                    completion(nil)
+                }
             }
         }
     }
