@@ -5,13 +5,14 @@ class RouteSummaryViewController: UIViewController {
     var totalEstimatedTime: String?
     var walkToStationTime: String?
     var walkToDestinationTime: String?
-    var transitInfo: TransitInfo?
+    var transitInfos: [TransitInfo] = []  // Changed to array to support transfers
 
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        print("RouteSummaryVC created successfully")
         view.backgroundColor = .white
         title = "Route Summary"
         setupLayout()
@@ -50,9 +51,16 @@ class RouteSummaryViewController: UIViewController {
             stackView.addArrangedSubview(walkCard)
         }
 
-        if let info = transitInfo {
-            let transitCard = makeTransitCard(info: info)
+        // Add all transit segments
+        for (index, info) in transitInfos.enumerated() {
+            let transitCard = makeTransitCard(info: info, isTransfer: index > 0)
             stackView.addArrangedSubview(transitCard)
+            
+            // Add transfer walk card if not the last segment
+            if index < transitInfos.count - 1 {
+                let transferWalkCard = makeCard(title: "🚶 Transfer Walk", subtitle: "Walk to next station")
+                stackView.addArrangedSubview(transferWalkCard)
+            }
         }
 
         if let walkEnd = walkToDestinationTime {
@@ -93,12 +101,12 @@ class RouteSummaryViewController: UIViewController {
 
         let titleLabel = UILabel()
         titleLabel.text = title
-        titleLabel.font = .systemFont(ofSize: 16, weight: .medium)
+        titleLabel.font = .boldSystemFont(ofSize: 16)
 
         let subtitleLabel = UILabel()
         subtitleLabel.text = subtitle
         subtitleLabel.font = .systemFont(ofSize: 14)
-        subtitleLabel.textColor = .darkGray
+        subtitleLabel.textColor = .gray
 
         let stack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
         stack.axis = .vertical
@@ -116,7 +124,7 @@ class RouteSummaryViewController: UIViewController {
         return card
     }
 
-    private func makeTransitCard(info: TransitInfo) -> UIView {
+    private func makeTransitCard(info: TransitInfo, isTransfer: Bool) -> UIView {
         let card = UIView()
         card.backgroundColor = UIColor(hex: info.lineColorHex ?? "#DADADA")
         card.layer.cornerRadius = 10
