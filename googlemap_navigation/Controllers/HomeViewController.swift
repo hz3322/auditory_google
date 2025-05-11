@@ -56,7 +56,11 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     private func setupMap() {
         let camera = GMSCameraPosition.camera(withLatitude: 0, longitude: 0, zoom: 12)
-        mapView = GMSMapView(frame: .zero, camera: camera)
+        
+        let options = GMSMapViewOptions()
+        options.camera = camera
+        mapView = GMSMapView(options: options)
+        
         mapView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(mapView)
 
@@ -122,9 +126,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         let autocompleteController = GMSAutocompleteViewController()
         autocompleteController.delegate = self
 
- 
         let filter = GMSAutocompleteFilter()
-        filter.type = .address
+        filter.countries = ["GB"]
         autocompleteController.autocompleteFilter = filter
 
         if textField == startTextField {
@@ -136,6 +139,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         present(autocompleteController, animated: true, completion: nil)
         return false
     }
+    
     func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) {
         if viewController.view.tag == 1 {
             startTextField.text = place.formattedAddress

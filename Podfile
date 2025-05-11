@@ -6,9 +6,8 @@ platform :ios, '16.0'
 target 'googlemap_navigation' do
   # Comment the next line if you don't want to use dynamic frameworks
   use_frameworks!
-  pod 'GoogleMaps', '9.4.0'
-  pod 'GooglePlaces', '9.4.1'
-
+  pod 'GoogleMaps'
+  pod 'GooglePlaces'
   # Pods for googlemap_navigation
 
   target 'googlemap_navigationTests' do

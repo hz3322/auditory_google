@@ -55,7 +55,7 @@ class RouteSummaryViewController: UIViewController {
         for (index, info) in transitInfos.enumerated() {
             let transitCard = makeTransitCard(info: info, isTransfer: index > 0)
             stackView.addArrangedSubview(transitCard)
-            
+
             // Add transfer walk card if not the last segment
             if index < transitInfos.count - 1 {
                 let transferWalkCard = makeCard(title: "🚶 Transfer Walk", subtitle: "Walk to next station")

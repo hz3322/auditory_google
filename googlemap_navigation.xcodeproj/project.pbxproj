@@ -65,11 +65,15 @@
 		};
 		E1F6D4AB2DBE78150023DC68 /* googlemap_navigationTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = googlemap_navigationTests;
 			sourceTree = "<group>";
 		};
 		E1F6D4B52DBE78150023DC68 /* googlemap_navigationUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = googlemap_navigationUITests;
 			sourceTree = "<group>";
 		};
@@ -295,13 +299,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-googlemap_navigation/Pods-googlemap_navigation-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-googlemap_navigation/Pods-googlemap_navigation-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -360,13 +360,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-googlemap_navigation-googlemap_navigationUITests/Pods-googlemap_navigation-googlemap_navigationUITests-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-googlemap_navigation-googlemap_navigationUITests/Pods-googlemap_navigation-googlemap_navigationUITests-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

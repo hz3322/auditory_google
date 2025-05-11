@@ -99,44 +99,7 @@ public final class RouteLogic {
             }
             return (walkMin, transitMin, walkSteps, transitInfos)
         }
-        
-        func fetchStopNames(for transit: TransitInfo, completion: @escaping (TransitInfo) -> Void) {
-            if let lineId = RouteLogic.shared.tflLineId(from: transit.lineName),
-               let url = URL(string: "https://api.tfl.gov.uk/Line/\(lineId)/Route/Sequence/inbound") {
-                
-                var request = URLRequest(url: url)
-                request.setValue("0bc9522b0b77427eb20e858550d6a072", forHTTPHeaderField: "app_key")
-                
-                URLSession.shared.dataTask(with: request) { data, _, _ in
-                    guard let data = data,
-                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let sequences = json["stopPointSequences"] as? [[String: Any]],
-                          let stops = sequences.first?["stopPoint"] as? [[String: Any]] else {
-                        DispatchQueue.main.async { completion(transit) }
-                        return
-                    }
-                    
-                    let names = stops.compactMap { $0["name"] as? String }
-                    
-                    if let start = names.firstIndex(where: { $0.contains(transit.departureStation) }),
-                       let end = names.firstIndex(where: { $0.contains(transit.arrivalStation) }) {
-                        let sliced = names[min(start, end)...max(start, end)]
-                        var updated = transit
-                        updated.stopNames = Array(sliced)
-                        DispatchQueue.main.async { completion(updated) }
-                    } else {
-                        var fallback = transit
-                        fallback.stopNames = [transit.departureStation, transit.arrivalStation]
-                        DispatchQueue.main.async { completion(fallback) }
-                    }
-                }.resume()
-            } else {
-                var fallback = transit
-                fallback.stopNames = [transit.departureStation, transit.arrivalStation]
-                DispatchQueue.main.async { completion(fallback) }
-            }
-        }
-        
+
         func tflLineId(from lineName: String) -> String? {
             let mapping: [String: String] = [
                 "Bakerloo": "bakerloo",
@@ -178,5 +141,125 @@ public final class RouteLogic {
         summaryVC.transitInfos = transitInfos
         viewController.navigationController?.pushViewController(summaryVC, animated: true)
     }
+    
+    
+    
+    func fetchStopNames(for transit: TransitInfo, completion: @escaping (TransitInfo) -> Void) {
+        func normalize(_ name: String) -> String {
+            return name.lowercased()
+                .replacingOccurrences(of: "underground station", with: "")
+                .replacingOccurrences(of: "rail station", with: "")
+                .replacingOccurrences(of: "train station", with: "")
+                .replacingOccurrences(of: "station", with: "")
+                .replacingOccurrences(of: "&", with: "and")
+                .replacingOccurrences(of: "[^a-z0-9]", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        func tflLineId(from lineName: String) -> String? {
+            let mapping: [String: String] = [
+                "Bakerloo": "bakerloo", "Central": "central", "Circle": "circle", "District": "district",
+                "Hammersmith & City": "hammersmith-city", "Jubilee": "jubilee", "Metropolitan": "metropolitan",
+                "Northern": "northern", "Piccadilly": "piccadilly", "Victoria": "victoria", "Waterloo & City": "waterloo-city",
+                "London Overground": "london-overground", "Elizabeth": "elizabeth", "Elizabeth line": "elizabeth",
+                "TfL Rail": "elizabeth", "DLR": "dlr", "Tram": "tram"
+            ]
+            return mapping[lineName] ?? mapping.first { $0.key.lowercased() == lineName.lowercased() }?.value
+        }
+
+        guard let lineId = tflLineId(from: transit.lineName),
+              let url = URL(string: "https://api.tfl.gov.uk/Line/\(lineId)/Route/Sequence/all") else {
+            var fallback = transit
+            fallback.stopNames = [transit.departureStation, transit.arrivalStation]
+            DispatchQueue.main.async { completion(fallback) }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("0bc9522b0b77427eb20e858550d6a072", forHTTPHeaderField: "app_key")
+
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            var result = transit
+            defer { DispatchQueue.main.async { completion(result) } }
+
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sequences = json["stopPointSequences"] as? [[String: Any]] else {
+                print("❌ Failed to parse TfL response")
+                return
+            }
+
+            print("📦 TfL returned \(sequences.count) sequences")
+
+            let depNorm = normalize(transit.departureStation)
+            let arrNorm = normalize(transit.arrivalStation)
+            print("🔍 Normalized departure: \(depNorm)")
+            print("🔍 Normalized arrival: \(arrNorm)")
+
+            let allSequences = sequences.map { $0["stopPoint"] as? [[String: Any]] ?? [] }
+
+            // Build graph
+            var graph = [String: [String]]()
+            var reverseMap = [String: String]()
+
+            for stopList in allSequences {
+                let names = stopList.compactMap { $0["name"] as? String }
+                for i in 0..<names.count - 1 {
+                    let from = normalize(names[i])
+                    let to = normalize(names[i + 1])
+                    graph[from, default: []].append(to)
+                    reverseMap[from] = names[i]
+                    reverseMap[to] = names[i + 1]
+                }
+            }
+
+            var visited = Set<String>()
+            var path: [String] = []
+            var foundPath: [String]? = nil
+            
+            
+            
+            //implement a graph structure where each node is a station,
+            // and edges are direct connections from one sequence to another (where end of A == start of B).
+            // Run DFS starting from the sequence that contains the departure station,
+            // recursively build path until you reach the sequence containing the arrival.
+            // Keep visited set to avoid loops.
+            // Return earliest valid path slice or nil if unreachable.
+
+            func dfs(_ current: String) {
+                if foundPath != nil { return }
+                visited.insert(current)
+                path.append(current)
+
+                if current == arrNorm {
+                    foundPath = path
+                    return
+                }
+
+                for neighbor in graph[current] ?? [] {
+                    if !visited.contains(neighbor) {
+                        dfs(neighbor)
+                    }
+                }
+
+                path.removeLast()
+                visited.remove(current)
+            }
+
+            dfs(depNorm)
+
+            if let dfsPath = foundPath {
+                let readablePath = dfsPath.compactMap { reverseMap[$0] }
+                print("✅ DFS found path: \(readablePath)")
+                result.stopNames = readablePath
+            } else {
+                print("🚫 No path found using DFS. Using fallback.")
+                result.stopNames = [transit.departureStation, transit.arrivalStation]
+            }
+
+        }.resume()
+    }
+
+   
 }
 
