@@ -29,7 +29,7 @@ class ViewController: UITabBarController {
         
         // Style the tab bar (optional but ✨ nice ✨)
         tabBar.tintColor = .systemBlue
-        tabBar.backgroundColor = .white
+        tabBar.backgroundColor = UIColor.systemBackground
     }
     
  

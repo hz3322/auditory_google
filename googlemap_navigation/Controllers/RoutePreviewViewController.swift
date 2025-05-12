@@ -25,12 +25,14 @@ class RoutePreviewViewController: UIViewController {
     private let speedLabel: UILabel = {
         let label = UILabel()
         label.text = "Speed: Normal"
+        label.textColor = UIColor.label
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
     private let estimatedTimeLabel: UILabel = {
         let label = UILabel()
         label.text = "Estimated Time: --"
+        label.textColor = UIColor.label
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -38,7 +40,7 @@ class RoutePreviewViewController: UIViewController {
         let button = UIButton(type: .system)
         button.setTitle("Confirm Route", for: .normal)
         button.backgroundColor = .systemBlue
-        button.setTitleColor(.white, for: .normal)
+        button.setTitleColor(UIColor.label, for: .normal)
         button.layer.cornerRadius = 8
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
@@ -46,7 +48,7 @@ class RoutePreviewViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .white
+        view.backgroundColor = UIColor.systemBackground
         title = "Route Preview"
         setupMap()
         setupUI()

@@ -22,6 +22,7 @@ class ActiveTripViewController: UIViewController, CLLocationManagerDelegate, GMS
     private let distanceLabel: UILabel = {
         let label = UILabel()
         label.textAlignment = .center
+        label.textColor = UIColor.label
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -29,6 +30,7 @@ class ActiveTripViewController: UIViewController, CLLocationManagerDelegate, GMS
     private let timeLabel: UILabel = {
         let label = UILabel()
         label.textAlignment = .center
+        label.textColor = UIColor.label
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -37,6 +39,7 @@ class ActiveTripViewController: UIViewController, CLLocationManagerDelegate, GMS
         let label = UILabel()
         label.textAlignment = .center
         label.numberOfLines = 0
+        label.textColor = UIColor.label
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -57,7 +60,7 @@ class ActiveTripViewController: UIViewController, CLLocationManagerDelegate, GMS
     }
     
     private func setupUI() {
-        view.backgroundColor = .white
+        view.backgroundColor = UIColor.systemBackground
         title = "Active Trip"
         
         // Setup map view

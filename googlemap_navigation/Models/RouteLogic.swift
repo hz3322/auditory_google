@@ -45,60 +45,64 @@ public final class RouteLogic {
             }.resume()
         }
         
-        func calculateRouteTimes(from steps: [[String: Any]]) -> (Double, Double, [WalkStep], [TransitInfo]) {
-            var walkMin = 0.0, transitMin = 0.0
-            var walkSteps: [WalkStep] = []
-            var transitInfos: [TransitInfo] = []
-            
-            for step in steps {
-                guard let mode = step["travel_mode"] as? String else { continue }
-                
-                if mode == "WALKING" {
-                    if let sub = step["steps"] as? [[String: Any]] {
-                        for s in sub {
-                            if let d = s["duration"] as? [String: Any],
-                               let dv = d["value"] as? Double,
-                               let dt = d["text"] as? String,
-                               let dist = s["distance"] as? [String: Any],
-                               let distText = dist["text"] as? String,
-                               let html = s["html_instructions"] as? String {
-                                let cleaned = html.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                                walkSteps.append(WalkStep(instruction: cleaned, distanceText: distText, durationText: dt))
-                                walkMin += dv / 60.0
-                            }
+    func calculateRouteTimes(from steps: [[String: Any]]) -> (Double, Double, [WalkStep], [TransitInfo]) {
+        var walkMin = 0.0, transitMin = 0.0
+        var walkSteps: [WalkStep] = []
+        var transitInfos: [TransitInfo] = []
+
+        for step in steps {
+            guard let mode = step["travel_mode"] as? String else { continue }
+
+            if mode == "WALKING" {
+                if let sub = step["steps"] as? [[String: Any]] {
+                    for s in sub {
+                        if let d = s["duration"] as? [String: Any],
+                           let dv = d["value"] as? Double,
+                           let dt = d["text"] as? String,
+                           let dist = s["distance"] as? [String: Any],
+                           let distText = dist["text"] as? String,
+                           let html = s["html_instructions"] as? String {
+                            let cleaned = html.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                            walkSteps.append(WalkStep(instruction: cleaned, distanceText: distText, durationText: dt))
+                            walkMin += dv / 60.0
                         }
                     }
-                } else if mode == "TRANSIT" {
-                    if let d = step["duration"] as? [String: Any],
-                       let value = d["value"] as? Double {
-                        transitMin += value / 60.0
-                    }
-                    
-                    if let td = step["transit_details"] as? [String: Any],
-                       let line = td["line"] as? [String: Any],
-                       let shortName = line["short_name"] as? String ?? line["name"] as? String,
-                       let dep = td["departure_stop"] as? [String: Any],
-                       let arr = td["arrival_stop"] as? [String: Any],
-                       let depTime = td["departure_time"] as? [String: Any],
-                       let arrTime = td["arrival_time"] as? [String: Any] {
-                        
-                        let durationText = "\(depTime["text"] ?? "") - \(arrTime["text"] ?? "")"
-                        let info = TransitInfo(
-                            lineName: shortName,
-                            departureStation: dep["name"] as? String ?? "-",
-                            arrivalStation: arr["name"] as? String ?? "-",
-                            durationText: durationText,
-                            platform: td["departure_platform"] as? String,
-                            crowdLevel: td["crowd_level"] as? String,
-                            numStops: td["num_stops"] as? Int,
-                            lineColorHex: line["color"] as? String
-                        )
-                        transitInfos.append(info)
-                    }
+                }
+            } else if mode == "TRANSIT" {
+                if let d = step["duration"] as? [String: Any],
+                   let value = d["value"] as? Double {
+                    transitMin += value / 60.0
+                }
+
+                if let td = step["transit_details"] as? [String: Any],
+                   let line = td["line"] as? [String: Any],
+                   let shortName = line["short_name"] as? String ?? line["name"] as? String,
+                   let dep = td["departure_stop"] as? [String: Any],
+                   let arr = td["arrival_stop"] as? [String: Any],
+                   let depTime = td["departure_time"] as? [String: Any],
+                   let arrTime = td["arrival_time"] as? [String: Any] {
+
+                    let durationText = "\(depTime["text"] ?? "") - \(arrTime["text"] ?? "")"
+                    let crowd = CrowdLevel(raw: td["crowd_level"] as? String)
+                    let delayStatus = line["status"] as? String ?? line["status_description"] as? String
+
+                    let info = TransitInfo(
+                        lineName: shortName,
+                        departureStation: dep["name"] as? String ?? "-",
+                        arrivalStation: arr["name"] as? String ?? "-",
+                        durationText: durationText,
+                        platform: td["departure_platform"] as? String,
+                        crowdLevel: crowd,
+                        numStops: td["num_stops"] as? Int,
+                        lineColorHex: line["color"] as? String,
+                        delayStatus: delayStatus
+                    )
+                    transitInfos.append(info)
                 }
             }
-            return (walkMin, transitMin, walkSteps, transitInfos)
         }
+        return (walkMin, transitMin, walkSteps, transitInfos)
+    }
 
         func tflLineId(from lineName: String) -> String? {
             let mapping: [String: String] = [
@@ -136,8 +140,12 @@ public final class RouteLogic {
     func navigateToSummary(from viewController: UIViewController, transitInfos: [TransitInfo], walkSteps: [WalkStep], estimated: String?) {
         let summaryVC = RouteSummaryViewController()
         summaryVC.totalEstimatedTime = estimated
+        
         summaryVC.walkToStationTime = walkSteps.first?.durationText
         summaryVC.walkToDestinationTime = walkSteps.last?.durationText
+        
+        
+        
         summaryVC.transitInfos = transitInfos
         viewController.navigationController?.pushViewController(summaryVC, animated: true)
     }
@@ -202,59 +210,53 @@ public final class RouteLogic {
             var graph = [String: [String]]()
             var reverseMap = [String: String]()
 
+            // 构建图（双向）
             for stopList in allSequences {
                 let names = stopList.compactMap { $0["name"] as? String }
                 for i in 0..<names.count - 1 {
                     let from = normalize(names[i])
                     let to = normalize(names[i + 1])
                     graph[from, default: []].append(to)
+                    graph[to, default: []].append(from)  // 双向连接
                     reverseMap[from] = names[i]
                     reverseMap[to] = names[i + 1]
                 }
             }
 
-            var visited = Set<String>()
-            var path: [String] = []
-            var foundPath: [String]? = nil
-            
-            
-            
-            //implement a graph structure where each node is a station,
-            // and edges are direct connections from one sequence to another (where end of A == start of B).
-            // Run DFS starting from the sequence that contains the departure station,
-            // recursively build path until you reach the sequence containing the arrival.
-            // Keep visited set to avoid loops.
-            // Return earliest valid path slice or nil if unreachable.
-
-            func dfs(_ current: String) {
-                if foundPath != nil { return }
+            // DFS 搜索路径（防止 backtrack 误删）
+            func dfs(_ current: String, target: String, visited: inout Set<String>, path: inout [String]) -> Bool {
                 visited.insert(current)
                 path.append(current)
 
-                if current == arrNorm {
-                    foundPath = path
-                    return
+                if current == target {
+                    return true
                 }
 
                 for neighbor in graph[current] ?? [] {
                     if !visited.contains(neighbor) {
-                        dfs(neighbor)
+                        if dfs(neighbor, target: target, visited: &visited, path: &path) {
+                            return true
+                        }
                     }
                 }
 
                 path.removeLast()
-                visited.remove(current)
+                return false
             }
 
-            dfs(depNorm)
+            // 执行搜索
+            var visited = Set<String>()
+            var resultPath: [String] = []
 
-            if let dfsPath = foundPath {
-                let readablePath = dfsPath.compactMap { reverseMap[$0] }
-                print("✅ DFS found path: \(readablePath)")
-                result.stopNames = readablePath
+            if dfs(depNorm, target: arrNorm, visited: &visited, path: &resultPath) {
+                let readable = resultPath.compactMap { reverseMap[$0] }
+                print("✅ Found path: \(readable)")
+                result.stopNames = readable
             } else {
-                print("🚫 No path found using DFS. Using fallback.")
-                result.stopNames = [transit.departureStation, transit.arrivalStation]
+                print("🚫 No path found — fallback")
+                var fallback = transit
+                fallback.stopNames = [transit.departureStation, transit.arrivalStation]
+                result = fallback
             }
 
         }.resume()
