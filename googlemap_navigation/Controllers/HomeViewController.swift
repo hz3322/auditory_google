@@ -210,35 +210,41 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         
         let routePreviewVC = RoutePreviewViewController()
         
-        if let startAddress = startTextField.text, !startAddress.isEmpty {
-            geocodeAddress(startAddress) { startCoordinate in
-                guard let startCoordinate = startCoordinate else {
+        if let startAddress = startTextField.text, !startAddress.isEmpty, startAddress != "Current Location" {
+            // Case 1: Custom start location
+            geocodeAddress(startAddress) { [weak self] startCoordinate in
+                guard let startCoord = startCoordinate else {
                     return
                 }
                 
-                self.geocodeAddress(destinationAddress) { destinationCoordinate in
-                    guard let destinationCoordinate = destinationCoordinate else {
+                self?.geocodeAddress(destinationAddress) { destinationCoordinate in
+                    guard let destCoord = destinationCoordinate else {
                         return
                     }
                     
-                    routePreviewVC.startLocation = startCoordinate
-                    routePreviewVC.destinationLocation = destinationCoordinate
-                    self.navigationController?.pushViewController(routePreviewVC, animated: true)
+                    routePreviewVC.startLocation = startCoord
+                    routePreviewVC.destinationLocation = destCoord
+                    DispatchQueue.main.async {
+                        self?.navigationController?.pushViewController(routePreviewVC, animated: true)
+                    }
                 }
             }
         } else {
-            guard let currentCoord = locationManager.location?.coordinate else {
+            // Case 2: Current location
+            guard let currentCoord = currentLocation else {
                 return
             }
             
-            geocodeAddress(destinationAddress) { destinationCoordinate in
-                guard let destinationCoordinate = destinationCoordinate else {
+            geocodeAddress(destinationAddress) { [weak self] destinationCoordinate in
+                guard let destCoord = destinationCoordinate else {
                     return
                 }
                 
                 routePreviewVC.startLocation = currentCoord
-                routePreviewVC.destinationLocation = destinationCoordinate
-                self.navigationController?.pushViewController(routePreviewVC, animated: true)
+                routePreviewVC.destinationLocation = destCoord
+                DispatchQueue.main.async {
+                    self?.navigationController?.pushViewController(routePreviewVC, animated: true)
+                }
             }
         }
     }
