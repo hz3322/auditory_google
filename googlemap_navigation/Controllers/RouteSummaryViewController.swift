@@ -1,39 +1,44 @@
 import UIKit
+import CoreLocation
 
-class RouteSummaryViewController: UIViewController {
-    
+class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
+
     var totalEstimatedTime: String?
     var walkToStationTime: String?
     var walkToDestinationTime: String?
-    var transitInfos: [TransitInfo] = []  // Changed to array to support transfers
-    
+    var transitInfos: [TransitInfo] = []
+
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
-    
+    private var locationManager = CLLocationManager()
+    private var movingDot = UIView()
+    private var dotCenterYConstraint: NSLayoutConstraint?
+    private var timelineMap: [String: TimelineView] = [:]
+    private var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+    private var stopLabelMap: [String: UILabel] = [:]
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        print("RouteSummaryVC created successfully")
         view.backgroundColor = UIColor.systemBackground
         title = "Route Summary"
         setupLayout()
         populateSummary()
     }
-    
+
     private func setupLayout() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
         stackView.spacing = 16
         stackView.translatesAutoresizingMaskIntoConstraints = false
-        
+
         view.addSubview(scrollView)
         scrollView.addSubview(stackView)
-        
+
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            
             stackView.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 20),
             stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 20),
             stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -20),
@@ -41,33 +46,62 @@ class RouteSummaryViewController: UIViewController {
             stackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40)
         ])
     }
-    
-    private func populateSummary() {
-        let totalLabel = makeLabel(text: "⏱️ Total Estimated Time: \(totalEstimatedTime ?? "--")", font: .boldSystemFont(ofSize: 18))
-        stackView.addArrangedSubview(totalLabel)
-        
-        if let walkStart = walkToStationTime {
-            let walkCard = makeCard(title: "🚶 Walk to Station", subtitle: walkStart)
-            stackView.addArrangedSubview(walkCard)
+
+    private func setupMovingDot(attachedTo timeline: TimelineView) {
+        movingDot = UIView()
+        movingDot.backgroundColor = .systemYellow
+        movingDot.layer.cornerRadius = 6
+        movingDot.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(movingDot)
+
+        dotCenterYConstraint = movingDot.centerYAnchor.constraint(equalTo: timeline.topAnchor)
+
+        if let dotY = dotCenterYConstraint {
+            NSLayoutConstraint.activate([
+                movingDot.centerXAnchor.constraint(equalTo: timeline.centerXAnchor),
+                movingDot.widthAnchor.constraint(equalToConstant: 12),
+                movingDot.heightAnchor.constraint(equalToConstant: 12),
+                dotY
+            ])
         }
-        
-        // Add all transit segments
+    }
+
+    private func startTrackingLocation() {
+        locationManager.delegate = self
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
+    }
+
+    private func populateSummary() {
+        let totalLabel = makeLabel(text: "⏱ Total Estimated Time: \(totalEstimatedTime ?? "--")", font: .boldSystemFont(ofSize: 18))
+        stackView.addArrangedSubview(totalLabel)
+
+        if let walkStart = walkToStationTime {
+            stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Station", subtitle: walkStart))
+        }
+
         for (index, info) in transitInfos.enumerated() {
-            let transitCard = makeTransitCard(info: info, isTransfer: index > 0)
-            stackView.addArrangedSubview(transitCard)
-            
-            // Add transfer walk card if not the last segment
+            let card = makeTransitCard(info: info, isTransfer: index > 0)
+            stackView.addArrangedSubview(card)
+
+            if index == 0, let timeline = timelineMap[info.lineName + ":" + (info.departureStation ?? "-")] {
+                setupMovingDot(attachedTo: timeline)
+            }
+
+            RouteLogic.shared.fetchStopCoordinates(for: RouteLogic.shared.tflLineId(from: info.lineName) ?? "", direction: "inbound") { coords in
+                self.stationCoordinates.merge(coords) { current, _ in current }
+                self.startTrackingLocation()
+            }
+
             if index < transitInfos.count - 1 {
-                let transferWalkCard = makeCard(title: "🚶 Transfer Walk", subtitle: "Walk to next station")
-                stackView.addArrangedSubview(transferWalkCard)
+                stackView.addArrangedSubview(makeCard(title: "🚶 Transfer Walk", subtitle: "Walk to next station"))
             }
         }
-        
+
         if let walkEnd = walkToDestinationTime {
-            let walkCard = makeCard(title: "🚶 Walk to Destination", subtitle: walkEnd)
-            stackView.addArrangedSubview(walkCard)
+            stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Destination", subtitle: walkEnd))
         }
-        
+
         let startButton = UIButton(type: .system)
         startButton.setTitle("Start Navigation", for: .normal)
         startButton.setTitleColor(UIColor.label, for: .normal)
@@ -77,15 +111,39 @@ class RouteSummaryViewController: UIViewController {
         startButton.translatesAutoresizingMaskIntoConstraints = false
         startButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
         startButton.addTarget(self, action: #selector(startNavigationTapped), for: .touchUpInside)
-        
         stackView.addArrangedSubview(startButton)
     }
-    
-    @objc private func startNavigationTapped() {
-        print("🧭 Navigation started!")
-        // TODO: Present turn-by-turn or audio guidance view
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        if let nearest = RouteLogic.shared.nearestStation(to: location, from: stationCoordinates),
+           let label = stopLabelMap[nearest] {
+
+            let key = transitInfos.first(where: { $0.stopNames.contains(nearest) })
+                .map { $0.lineName + ":" + ($0.departureStation ?? "-") }
+
+            guard let timeline = key.flatMap({ timelineMap[$0] }) else { return }
+
+            let offset = label.convert(label.bounds, to: timeline).midY
+
+            dotCenterYConstraint?.isActive = false
+            dotCenterYConstraint = movingDot.centerYAnchor.constraint(equalTo: timeline.topAnchor, constant: offset)
+            dotCenterYConstraint?.isActive = true
+
+            UIView.animate(withDuration: 0.3) {
+                self.view.layoutIfNeeded()
+                self.movingDot.alpha = 0.2
+                UIView.animate(withDuration: 0.3) {
+                    self.movingDot.alpha = 1.0
+                }
+            }
+        }
     }
-    
+
+    @objc private func startNavigationTapped() {
+        // Navigation logic will be implemented here
+    }
+
     private func makeLabel(text: String, font: UIFont) -> UILabel {
         let label = UILabel()
         label.text = text
@@ -94,27 +152,27 @@ class RouteSummaryViewController: UIViewController {
         label.numberOfLines = 0
         return label
     }
-    
+
     private func makeCard(title: String, subtitle: String) -> UIView {
         let card = UIView()
         card.backgroundColor = UIColor.secondarySystemBackground
         card.layer.cornerRadius = 10
-        
+
         let titleLabel = UILabel()
         titleLabel.text = title
         titleLabel.font = .boldSystemFont(ofSize: 16)
         titleLabel.textColor = UIColor.label
-        
+
         let subtitleLabel = UILabel()
         subtitleLabel.text = subtitle
         subtitleLabel.font = .systemFont(ofSize: 14)
         subtitleLabel.textColor = UIColor.secondaryLabel
-        
+
         let stack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
         stack.axis = .vertical
         stack.spacing = 4
         stack.translatesAutoresizingMaskIntoConstraints = false
-        
+
         card.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
@@ -122,68 +180,104 @@ class RouteSummaryViewController: UIViewController {
             stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
             stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12)
         ])
-        
+
         return card
     }
-    
+
     private func makeTransitCard(info: TransitInfo, isTransfer: Bool) -> UIView {
         let card = UIView()
         card.backgroundColor = UIColor(hex: info.lineColorHex ?? "#DADADA")
         card.layer.cornerRadius = 10
-        
-        // Start and end station
-        let topLabel = UILabel()
-        topLabel.text = "🚇 \(info.stopNames.first ?? info.departureStation) → \(info.stopNames.last ?? info.arrivalStation)"
-        topLabel.font = .boldSystemFont(ofSize: 16)
-        topLabel.textColor = UIColor.label
-        
-        // Crowd level label
+
+        let timeline = TimelineView()
+        timeline.lineColor = UIColor(hex: info.lineColorHex ?? "#FFFFFF")
+        timeline.translatesAutoresizingMaskIntoConstraints = false
+        timeline.widthAnchor.constraint(equalToConstant: 20).isActive = true
+
+        let lineKey = info.lineName + ":" + (info.departureStation ?? "-")
+        timelineMap[lineKey] = timeline
+
+        timeline.setContentHuggingPriority(.required, for: .horizontal)
+        timeline.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let startLabel = UILabel()
+        startLabel.text = info.departureStation
+        startLabel.font = .boldSystemFont(ofSize: 16)
+        startLabel.textColor = .white
+        stopLabelMap[startLabel.text ?? ""] = startLabel
+
         let crowdLabel = UILabel()
-        crowdLabel.text = "👥 \(info.crowdLevel.emoji)"
+        crowdLabel.text = info.delayStatus
         crowdLabel.font = .systemFont(ofSize: 14)
-        crowdLabel.textColor = UIColor.label
-        
-        // Middle stops
+        crowdLabel.textColor = .white
+
         let intermediateLabel = UILabel()
         intermediateLabel.font = .systemFont(ofSize: 13)
-        intermediateLabel.textColor = UIColor.label
+        intermediateLabel.textColor = .white
         intermediateLabel.numberOfLines = 0
         intermediateLabel.isHidden = true
-        
+
         let stops = info.stopNames
         if stops.count > 2 {
             let middle = stops[1..<(stops.count - 1)]
-            let middleLines = middle.map { "• \($0)" }
+            let middleLines = middle.map { (station: String) in "• \(station)" }
             intermediateLabel.text = middleLines.joined(separator: "\n")
         }
         
-        // Toggle button
+        let rideSummaryLabel = UILabel()
+        let stopCount = max((info.numStops ?? 1) - 1, 0)
+        let duration = info.durationText ?? ""
+        rideSummaryLabel.text = "Ride · \(stopCount) stops · \(duration)"
+        rideSummaryLabel.font = .systemFont(ofSize: 13)
+        rideSummaryLabel.textColor = .white
+        
+
         let toggleButton = UIButton(type: .system)
-        toggleButton.setTitle("Show Stops ⬇️", for: .normal)
-        toggleButton.tintColor = UIColor.label
+        let arrowImage = UIImage(systemName: "chevron.down")?.withRenderingMode(.alwaysTemplate)
+        toggleButton.setImage(arrowImage, for: .normal)
+        toggleButton.tintColor = .white
+        toggleButton.transform = .identity
         toggleButton.addAction(UIAction { _ in
             intermediateLabel.isHidden.toggle()
-            toggleButton.setTitle(intermediateLabel.isHidden ? "Show Stops ⬇️" : "Hide Stops ⬆️", for: .normal)
+            UIView.animate(withDuration: 0.25) {
+                toggleButton.transform = intermediateLabel.isHidden ? .identity : CGAffineTransform(rotationAngle: .pi)
+            }
         }, for: .touchUpInside)
+
         
-        // Stack layout
-        var arranged: [UIView] = [topLabel]
-        if info.crowdLevel != nil { arranged.append(crowdLabel) }
-        arranged += [toggleButton, intermediateLabel]
+        let toggleRow = UIStackView(arrangedSubviews: [toggleButton, rideSummaryLabel])
+        toggleRow.axis = .horizontal
+        toggleRow.spacing = 8
+        toggleRow.alignment = .center
         
-        let stack = UIStackView(arrangedSubviews: arranged)
-        stack.axis = .vertical
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        
-        card.addSubview(stack)
+        let toggleRowWrapper = UIStackView(arrangedSubviews: [toggleRow])
+        toggleRowWrapper.axis = .vertical
+        toggleRowWrapper.alignment = .leading // ⬅️ 关键点！让 toggleRow 靠左对齐
+
+
+        let endLabel = UILabel()
+        endLabel.text = info.arrivalStation
+        endLabel.font = .boldSystemFont(ofSize: 16)
+        endLabel.textColor = .white
+        stopLabelMap[endLabel.text ?? ""] = endLabel
+
+        let contentStack = UIStackView(arrangedSubviews: [startLabel, crowdLabel, toggleRowWrapper, intermediateLabel, endLabel])
+        contentStack.axis = .vertical
+        contentStack.spacing = 6
+
+        let horizontalStack = UIStackView(arrangedSubviews: [timeline, contentStack])
+        horizontalStack.axis = .horizontal
+        horizontalStack.spacing = 12
+        horizontalStack.translatesAutoresizingMaskIntoConstraints = false
+
+        card.addSubview(horizontalStack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12)
+            horizontalStack.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
+            horizontalStack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+            horizontalStack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            horizontalStack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12)
         ])
-        
+
         return card
     }
 }
@@ -192,14 +286,33 @@ extension UIColor {
     convenience init(hex: String) {
         var hexFormatted = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         if hexFormatted.hasPrefix("#") { hexFormatted.removeFirst() }
-        
+
         var rgbValue: UInt64 = 0
         Scanner(string: hexFormatted).scanHexInt64(&rgbValue)
-        
+
         let r = CGFloat((rgbValue & 0xFF0000) >> 16) / 255.0
         let g = CGFloat((rgbValue & 0x00FF00) >> 8) / 255.0
         let b = CGFloat(rgbValue & 0x0000FF) / 255.0
-        
+
         self.init(red: r, green: g, blue: b, alpha: 1.0)
+    }
+}
+
+class TimelineView: UIView {
+    var lineColor: UIColor = .white {
+        didSet {
+            setNeedsDisplay()
+        }
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        context.setLineWidth(2)
+        context.setStrokeColor(lineColor.cgColor)
+
+        let centerX = rect.width / 2
+        context.move(to: CGPoint(x: centerX, y: 0))
+        context.addLine(to: CGPoint(x: centerX, y: rect.height))
+        context.strokePath()
     }
 }

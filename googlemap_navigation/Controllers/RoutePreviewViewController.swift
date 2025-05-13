@@ -128,8 +128,9 @@ class RoutePreviewViewController: UIViewController {
     }
     
     private func fetchRoute(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) {
+        let userLocation = CLLocation(latitude: from.latitude, longitude: from.longitude)
         RouteLogic.shared.fetchRoute(
-            from: from,
+            from: userLocation,
             to: to,
             speedMultiplier: Double(self.speedSlider.value)
         ) { [weak self] walkSteps, transitSegments, totalTime, routeSteps in

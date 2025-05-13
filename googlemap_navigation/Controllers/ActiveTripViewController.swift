@@ -106,10 +106,10 @@ class ActiveTripViewController: UIViewController, CLLocationManagerDelegate, GMS
     
     private func setupSpeechSynthesizer() {
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("Failed to set up audio session: \(error)")
+            // Handle audio session setup error silently
         }
     }
     
