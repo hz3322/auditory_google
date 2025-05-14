@@ -4,9 +4,11 @@ import GoogleMaps
 
 
 public final class RouteLogic {
-        static let shared = RouteLogic()
-        private init() {}
-    
+    static let shared = RouteLogic()
+    private init() {}
+
+    var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+
     
     // MARK: - Google Directions API Wrapper
 

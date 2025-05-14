@@ -21,7 +21,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.systemBackground
+        view.backgroundColor = .systemBackground
+        setupUI()
+    }
+
+    private func setupUI() {
         title = "Route Summary"
         setupLayout()
         populateSummary()
@@ -49,23 +53,24 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         ])
     }
 
-    private func setupMovingDot(attachedTo timeline: TimelineView) {
+    private func setupMovingDot(attachedTo timeline: TimelineView, in card: UIView) {
+        guard let label = card.viewWithTag(999) else { return }
+
         movingDot = UIView()
         movingDot.backgroundColor = .systemYellow
         movingDot.layer.cornerRadius = 6
         movingDot.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(movingDot)
 
-        dotCenterYConstraint = movingDot.centerYAnchor.constraint(equalTo: timeline.topAnchor)
+        let offset = label.convert(label.bounds, to: timeline).midY
+        dotCenterYConstraint = movingDot.centerYAnchor.constraint(equalTo: timeline.topAnchor, constant: offset)
 
-        if let dotY = dotCenterYConstraint {
-            NSLayoutConstraint.activate([
-                movingDot.centerXAnchor.constraint(equalTo: timeline.centerXAnchor),
-                movingDot.widthAnchor.constraint(equalToConstant: 12),
-                movingDot.heightAnchor.constraint(equalToConstant: 12),
-                dotY
-            ])
-        }
+        NSLayoutConstraint.activate([
+            movingDot.centerXAnchor.constraint(equalTo: timeline.centerXAnchor),
+            movingDot.widthAnchor.constraint(equalToConstant: 12),
+            movingDot.heightAnchor.constraint(equalToConstant: 12),
+            dotCenterYConstraint!
+        ])
     }
 
     private func startTrackingLocation() {
@@ -92,8 +97,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             stackView.addArrangedSubview(card)
 
             // 🟡 Attach moving dot to first segment's timeline
-            if index == 0, let timeline = timelineMap[info.lineName + ":" + (info.departureStation ?? "-")] {
-                setupMovingDot(attachedTo: timeline)
+            if index == 0,
+               let timeline = timelineMap[info.lineName + ":" + (info.departureStation ?? "-")] {
+                setupMovingDot(attachedTo: timeline, in: card)
             }
 
             // 📍 Fetch stop coordinates for GPS matching
@@ -215,7 +221,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
         timeline.setContentHuggingPriority(.required, for: .horizontal)
         timeline.setContentCompressionResistancePriority(.required, for: .horizontal)
-
+        
+        let lineBadgeLabel = PaddingLabel()
+        lineBadgeLabel.text = info.lineName
+        lineBadgeLabel.font = .boldSystemFont(ofSize: 13)
+        lineBadgeLabel.textColor = .black
+        lineBadgeLabel.backgroundColor = UIColor.white.withAlphaComponent(0.8)
+        lineBadgeLabel.layer.cornerRadius = 6
+        lineBadgeLabel.clipsToBounds = true
+        lineBadgeLabel.textAlignment = .center
+        
         let startLabel = UILabel()
         startLabel.text = info.departureStation
         startLabel.font = .boldSystemFont(ofSize: 16)
@@ -242,7 +257,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         
         let rideSummaryLabel = UILabel()
         let stopCount = info.numStops ?? 0
-//        let duration = info.durationText ?? ""
         let durationTime = info.durationTime ?? "-"
         rideSummaryLabel.text = "Ride · \(stopCount) stops · \(durationTime)"
         
@@ -276,7 +290,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         endLabel.textColor = .white
         stopLabelMap[endLabel.text ?? ""] = endLabel
 
-        let contentStack = UIStackView(arrangedSubviews: [startLabel, crowdLabel, toggleRowWrapper, intermediateLabel, endLabel])
+        let contentStack = UIStackView(arrangedSubviews: [lineBadgeLabel, startLabel, crowdLabel, toggleRowWrapper, intermediateLabel, endLabel])
         contentStack.axis = .vertical
         contentStack.spacing = 6
 
@@ -329,5 +343,26 @@ class TimelineView: UIView {
         context.move(to: CGPoint(x: centerX, y: 0))
         context.addLine(to: CGPoint(x: centerX, y: rect.height))
         context.strokePath()
+    }
+    
+    
+   
+}
+
+
+
+
+//Utility class
+class PaddingLabel: UILabel {
+    var insets = UIEdgeInsets(top: 3, left: 8, bottom: 3, right: 8)
+    
+    override func drawText(in rect: CGRect) {
+        super.drawText(in: rect.inset(by: insets))
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(width: size.width + insets.left + insets.right,
+                      height: size.height + insets.top + insets.bottom)
     }
 }

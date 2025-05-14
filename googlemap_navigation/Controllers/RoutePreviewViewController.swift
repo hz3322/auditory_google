@@ -1,34 +1,22 @@
-// Final cleaned-up version of RoutePreviewViewController.swift with manual user confirmation
+// RoutePreviewViewController.swift
+// Cleaned version with line colors and live preview, with floating station name labels next to markers.
 
 import UIKit
 import GoogleMaps
 import CoreLocation
 
-class RoutePreviewViewController: UIViewController {
+class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
+    // MARK: - Inputs
     var startLocation: CLLocationCoordinate2D?
     var destinationLocation: CLLocationCoordinate2D?
     var parsedWalkSteps: [WalkStep] = []
-    var transitInfos: [TransitInfo] = []     // Changed back to array to support transfers
+    var transitInfos: [TransitInfo] = []
+
+    // MARK: - Internal state
     private var mapView: GMSMapView!
-    
-    
-    // --------------------------------------- UI element ----------------------------------------- //
-    private let speedSlider: UISlider = {
-        let slider = UISlider()
-        slider.minimumValue = 0.6
-        slider.maximumValue = 1.4
-        slider.value = 1.0
-        slider.translatesAutoresizingMaskIntoConstraints = false
-        return slider
-    }()
-    
-    private let speedLabel: UILabel = {
-        let label = UILabel()
-        label.text = "Speed: Normal"
-        label.textColor = UIColor.label
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
+    private var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+
+    // MARK: - UI Elements
     private let estimatedTimeLabel: UILabel = {
         let label = UILabel()
         label.text = "Estimated Time: --"
@@ -36,6 +24,7 @@ class RoutePreviewViewController: UIViewController {
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
+
     private let confirmButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle("Confirm Route", for: .normal)
@@ -45,152 +34,190 @@ class RoutePreviewViewController: UIViewController {
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
-    
+
+    private let bottomCardView: UIView = {
+        let view = UIView()
+        view.backgroundColor = .white
+        view.layer.cornerRadius = 16
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOpacity = 0.1
+        view.layer.shadowOffset = CGSize(width: 0, height: -2)
+        view.layer.shadowRadius = 8
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+
+    private let bottomEstimatedLabel: UILabel = {
+        let label = UILabel()
+        label.textAlignment = .center
+        label.textColor = UIColor.black
+        label.numberOfLines = 1
+        label.backgroundColor = .white
+        label.layer.cornerRadius = 12
+        label.layer.masksToBounds = true
+        label.font = UIFont.systemFont(ofSize: 15, weight: .medium)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+
+    private let bottomConfirmButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Confirm Route", for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.backgroundColor = .systemBlue
+        button.layer.cornerRadius = 10
+        button.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+
+    // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor.systemBackground
         title = "Route Preview"
+
         setupMap()
         setupUI()
         setupActions()
         showRouteIfPossible()
+        loadStationCoordinates()
     }
-    
+
+    // MARK: - Map Setup
     private func setupMap() {
-        let camera = GMSCameraPosition.camera(withLatitude: startLocation?.latitude ?? 0,
-                                              longitude: startLocation?.longitude ?? 0,
-                                              zoom: 12)
-        let options = GMSMapViewOptions()
-        options.camera = camera
-        mapView = GMSMapView(options: options)
-        mapView.translatesAutoresizingMaskIntoConstraints = false
+        let camera = GMSCameraPosition.camera(withLatitude: 51.5074, longitude: -0.1278, zoom: 12)
+        mapView = GMSMapView.map(withFrame: view.bounds, camera: camera)
+        mapView.delegate = self
+        mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(mapView)
-        
-        NSLayoutConstraint.activate([
-            mapView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            mapView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            mapView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            mapView.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.5)
-        ])
     }
-    
+
+    // MARK: - UI Setup
     private func setupUI() {
-        view.addSubview(speedSlider)
-        view.addSubview(speedLabel)
-        view.addSubview(estimatedTimeLabel)
-        view.addSubview(confirmButton)
-        
+        view.addSubview(bottomCardView)
+        bottomCardView.addSubview(bottomEstimatedLabel)
+        bottomCardView.addSubview(bottomConfirmButton)
+
         NSLayoutConstraint.activate([
-            speedSlider.topAnchor.constraint(equalTo:mapView.bottomAnchor, constant: 20),
-            speedSlider.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            speedSlider.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            
-            speedLabel.topAnchor.constraint(equalTo: speedSlider.bottomAnchor, constant: 10),
-            speedLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            
-            estimatedTimeLabel.topAnchor.constraint(equalTo: speedLabel.bottomAnchor, constant: 20),
-            estimatedTimeLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            
-            confirmButton.topAnchor.constraint(equalTo: estimatedTimeLabel.bottomAnchor, constant: 30),
-            confirmButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            confirmButton.widthAnchor.constraint(equalToConstant: 180),
-            confirmButton.heightAnchor.constraint(equalToConstant: 44)
+            bottomCardView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomCardView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomCardView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            bottomCardView.heightAnchor.constraint(equalToConstant: 140),
+
+            bottomEstimatedLabel.topAnchor.constraint(equalTo: bottomCardView.topAnchor, constant: 20),
+            bottomEstimatedLabel.leadingAnchor.constraint(equalTo: bottomCardView.leadingAnchor, constant: 20),
+            bottomEstimatedLabel.trailingAnchor.constraint(equalTo: bottomCardView.trailingAnchor, constant: -20),
+            bottomEstimatedLabel.heightAnchor.constraint(equalToConstant: 24),
+
+            bottomConfirmButton.topAnchor.constraint(equalTo: bottomEstimatedLabel.bottomAnchor, constant: 12),
+            bottomConfirmButton.leadingAnchor.constraint(equalTo: bottomCardView.leadingAnchor, constant: 20),
+            bottomConfirmButton.trailingAnchor.constraint(equalTo: bottomCardView.trailingAnchor, constant: -20),
+            bottomConfirmButton.heightAnchor.constraint(equalToConstant: 44)
         ])
     }
-    
+
     private func setupActions() {
-        speedSlider.addTarget(self, action: #selector(routeOptionsChanged), for: .valueChanged)
-        confirmButton.addTarget(self, action: #selector(confirmRouteTapped), for: .touchUpInside)
+        bottomConfirmButton.addTarget(self, action: #selector(confirmRouteTapped), for: .touchUpInside)
     }
-    
-    @objc private func routeOptionsChanged() {
-        let speed = speedSlider.value
-        let speedText = speed < 0.75 ? "Slow" : (speed > 1.25 ? "Fast" : "Normal")
-        speedLabel.text = "Speed: \(speedText)"
-        showRouteIfPossible()
-    }
-    
+
+    // MARK: - Load and Render
     private func showRouteIfPossible() {
         guard let start = startLocation, let end = destinationLocation else { return }
         mapView.clear()
-        drawMarkers(start: start, end: end)
         fetchRoute(from: start, to: end)
     }
-    
-    private func drawMarkers(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D) {
-        let startMarker = GMSMarker(position: start)
-        startMarker.title = "Start"
-        startMarker.map = mapView
-        
-        let endMarker = GMSMarker(position: end)
-        endMarker.title = "Destination"
-        endMarker.map = mapView
-    }
-    
+
     private func fetchRoute(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) {
         let userLocation = CLLocation(latitude: from.latitude, longitude: from.longitude)
+
         RouteLogic.shared.fetchRoute(
             from: userLocation,
             to: to,
-            speedMultiplier: Double(self.speedSlider.value)
+            speedMultiplier: 1.0
         ) { [weak self] walkSteps, transitSegments, totalTime, routeSteps in
             guard let self = self else { return }
             self.parsedWalkSteps = walkSteps
             self.transitInfos = transitSegments
-            self.estimatedTimeLabel.text = String(format: "Estimated Time: %.0f min", totalTime)
-            
-            // Draw the route on the map
+
+            let formattedTime = String(format: "%.0f", totalTime)
+            self.bottomEstimatedLabel.text = "Estimated time: \(formattedTime) min"
+
             self.drawPolyline(from: routeSteps)
+            self.addMarkersAndPolylines()
         }
     }
-    
+
     private func drawPolyline(from steps: [[String: Any]]) {
-        DispatchQueue.main.async {
-            self.mapView.clear()
-            var bounds = GMSCoordinateBounds()
-            
-            // Draw markers for start and end points
-            if let start = self.startLocation, let end = self.destinationLocation {
-                self.drawMarkers(start: start, end: end)
-            }
-            
-            for step in steps {
-                guard let mode = step["travel_mode"] as? String,
-                      let polylineDict = step["polyline"] as? [String: Any],
-                      let points = polylineDict["points"] as? String,
-                      let path = GMSPath(fromEncodedPath: points) else { continue }
+        var bounds = GMSCoordinateBounds()
 
-                let polyline = GMSPolyline(path: path)
-                polyline.strokeWidth = 5
-                
-                // Set different colors for walking and transit
-                if mode == "WALKING" {
-                    polyline.strokeColor = .systemTeal
-                } else if mode == "TRANSIT" {
-                    // Try to get the line color from transit details
-                    if let td = step["transit_details"] as? [String: Any],
-                       let line = td["line"] as? [String: Any],
-                       let colorHex = line["color"] as? String {
-                        polyline.strokeColor = UIColor(hex: colorHex) ?? .systemBlue
-                    } else {
-                        polyline.strokeColor = .systemBlue
-                    }
-                }
-                
-                polyline.map = self.mapView
+        for step in steps {
+            guard let mode = step["travel_mode"] as? String,
+                  let polylineDict = step["polyline"] as? [String: Any],
+                  let points = polylineDict["points"] as? String,
+                  let path = GMSPath(fromEncodedPath: points) else { continue }
 
-                // Update bounds to include all points
-                for i in 0..<path.count() {
-                    bounds = bounds.includingCoordinate(path.coordinate(at: i))
+            let polyline = GMSPolyline(path: path)
+            polyline.strokeWidth = 5
+
+            if mode == "WALKING" {
+                polyline.strokeColor = .systemTeal
+            } else if mode == "TRANSIT" {
+                if let td = step["transit_details"] as? [String: Any],
+                   let line = td["line"] as? [String: Any],
+                   let colorHex = line["color"] as? String {
+                    polyline.strokeColor = UIColor(hex: colorHex) ?? .systemBlue
+                } else {
+                    polyline.strokeColor = .systemBlue
                 }
             }
-            
-            // Animate camera to show the entire route
-            let update = GMSCameraUpdate.fit(bounds, with: UIEdgeInsets(top: 60, left: 40, bottom: 40, right: 40))
-            self.mapView.animate(with: update)
+
+            polyline.map = self.mapView
+
+            for i in 0..<path.count() {
+                bounds = bounds.includingCoordinate(path.coordinate(at: i))
+            }
+        }
+
+        mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 60))
+    }
+
+    private func loadStationCoordinates() {
+        RouteLogic.shared.loadAllTubeStations { [weak self] stationsDict in
+            self?.stationCoordinates = stationsDict
+            self?.addMarkersAndPolylines()
         }
     }
-    
+
+    private func addMarkersAndPolylines() {
+        guard !transitInfos.isEmpty else { return }
+
+        for info in transitInfos {
+            guard let startName = info.departureStation,
+                  let endName = info.arrivalStation,
+                  let startCoord = stationCoordinates[startName],
+                  let endCoord = stationCoordinates[endName] else { continue }
+
+            let startMarker = GMSMarker(position: startCoord)
+            startMarker.icon = GMSMarker.markerImage(with: .systemBlue)
+            startMarker.title = startName
+            startMarker.map = mapView
+
+            let endMarker = GMSMarker(position: endCoord)
+            endMarker.icon = GMSMarker.markerImage(with: .systemRed)
+            endMarker.title = endName
+            endMarker.map = mapView
+        }
+
+        if let first = transitInfos.first,
+           let start = first.departureStation.flatMap({ stationCoordinates[$0] }),
+           let last = transitInfos.last?.arrivalStation.flatMap({ stationCoordinates[$0] }) {
+            let bounds = GMSCoordinateBounds(coordinate: start, coordinate: last)
+            mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 60))
+        }
+    }
+
+    // MARK: - Confirm & Navigation
     @objc private func confirmRouteTapped() {
         guard !transitInfos.isEmpty else {
             let alert = UIAlertController(title: "Route not ready", message: "Still loading route info, try again in a moment.", preferredStyle: .alert)
@@ -198,11 +225,13 @@ class RoutePreviewViewController: UIViewController {
             present(alert, animated: true)
             return
         }
-        RouteLogic.shared.navigateToSummary(from: self, transitInfos: self.transitInfos, walkSteps: self.parsedWalkSteps, estimated: self.estimatedTimeLabel.text)
+
+        RouteLogic.shared.navigateToSummary(
+            from: self,
+            transitInfos: self.transitInfos,
+            walkSteps: self.parsedWalkSteps,
+            estimated: self.bottomEstimatedLabel.text
+        )
     }
 }
-    
-    
-
-
 
