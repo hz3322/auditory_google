@@ -34,16 +34,18 @@ public enum CrowdLevel: String {
 }
 
 public struct TransitInfo {
-        var lineName: String
-        var departureStation: String?
-        var arrivalStation: String?
-        var durationText: String?
-        var platform: String?
-        var crowdLevel: CrowdLevel?
-        var numStops: Int?
-        var lineColorHex: String?
-        var delayStatus: String?
-        var stopNames: [String] = []
+    var lineName: String
+    var departureStation: String?
+    var arrivalStation: String?
+    var durationText: String?
+    var platform: String?
+    var crowdLevel: CrowdLevel?
+    var numStops: Int?
+    var lineColorHex: String?
+    var delayStatus: String?
+    var stopNames: [String] = []
+    var durationTime: String?
+    
     
     public init(
         lineName: String,
@@ -55,7 +57,8 @@ public struct TransitInfo {
         numStops: Int?,
         lineColorHex: String?,
         delayStatus: String?,
-        stopNames: [String] = []
+        stopNames: [String] = [],
+        durationTime: String? = nil
     ) {
         self.lineName = lineName
         self.departureStation = departureStation
@@ -67,5 +70,6 @@ public struct TransitInfo {
         self.lineColorHex = lineColorHex
         self.delayStatus = delayStatus
         self.stopNames = stopNames
+        self.durationTime = durationTime
     }
 }

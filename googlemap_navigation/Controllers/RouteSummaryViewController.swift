@@ -7,6 +7,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     var walkToStationTime: String?
     var walkToDestinationTime: String?
     var transitInfos: [TransitInfo] = []
+    var routeDepartureTime: String?
+    var routeArrivalTime: String?
 
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
@@ -73,35 +75,49 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 
     private func populateSummary() {
-        let totalLabel = makeLabel(text: "⏱ Total Estimated Time: \(totalEstimatedTime ?? "--")", font: .boldSystemFont(ofSize: 18))
-        stackView.addArrangedSubview(totalLabel)
+        // ⏱ Top time label：比如 "12:10 → 12:52"
+        if let dep = routeDepartureTime, let arr = routeArrivalTime {
+            let topTimeLabel = makeLabel(text: "\(dep) → \(arr)", font: .systemFont(ofSize: 16, weight: .medium))
+            stackView.addArrangedSubview(topTimeLabel)
+        }
 
+        // 🚶 Walk to Station
         if let walkStart = walkToStationTime {
             stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Station", subtitle: walkStart))
         }
 
+        // 🚇 Transit Segments
         for (index, info) in transitInfos.enumerated() {
             let card = makeTransitCard(info: info, isTransfer: index > 0)
             stackView.addArrangedSubview(card)
 
+            // 🟡 Attach moving dot to first segment's timeline
             if index == 0, let timeline = timelineMap[info.lineName + ":" + (info.departureStation ?? "-")] {
                 setupMovingDot(attachedTo: timeline)
             }
 
+            // 📍 Fetch stop coordinates for GPS matching
             RouteLogic.shared.fetchStopCoordinates(for: RouteLogic.shared.tflLineId(from: info.lineName) ?? "", direction: "inbound") { coords in
                 self.stationCoordinates.merge(coords) { current, _ in current }
                 self.startTrackingLocation()
             }
 
+            // 🔁 Transfer Walk Time
             if index < transitInfos.count - 1 {
-                stackView.addArrangedSubview(makeCard(title: "🚶 Transfer Walk", subtitle: "Walk to next station"))
+                if let transferTime = info.durationTime {
+                    stackView.addArrangedSubview(makeCard(title: "🚶 Transfer Walk", subtitle: "\(transferTime) transfer time"))
+                } else {
+                    stackView.addArrangedSubview(makeCard(title: "🚶 Transfer Walk", subtitle: "Walk to next station"))
+                }
             }
         }
 
+        // 🚶 Final Walk to Destination
         if let walkEnd = walkToDestinationTime {
             stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Destination", subtitle: walkEnd))
         }
 
+        // 🟢 Start Navigation Button
         let startButton = UIButton(type: .system)
         startButton.setTitle("Start Navigation", for: .normal)
         startButton.setTitleColor(UIColor.label, for: .normal)
@@ -225,12 +241,13 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         }
         
         let rideSummaryLabel = UILabel()
-        let stopCount = max((info.numStops ?? 1) - 1, 0)
-        let duration = info.durationText ?? ""
-        rideSummaryLabel.text = "Ride · \(stopCount) stops · \(duration)"
+        let stopCount = info.numStops ?? 0
+//        let duration = info.durationText ?? ""
+        let durationTime = info.durationTime ?? "-"
+        rideSummaryLabel.text = "Ride · \(stopCount) stops · \(durationTime)"
+        
         rideSummaryLabel.font = .systemFont(ofSize: 13)
         rideSummaryLabel.textColor = .white
-        
 
         let toggleButton = UIButton(type: .system)
         let arrowImage = UIImage(systemName: "chevron.down")?.withRenderingMode(.alwaysTemplate)
@@ -244,7 +261,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             }
         }, for: .touchUpInside)
 
-        
         let toggleRow = UIStackView(arrangedSubviews: [toggleButton, rideSummaryLabel])
         toggleRow.axis = .horizontal
         toggleRow.spacing = 8
@@ -252,8 +268,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         
         let toggleRowWrapper = UIStackView(arrangedSubviews: [toggleRow])
         toggleRowWrapper.axis = .vertical
-        toggleRowWrapper.alignment = .leading // ⬅️ 关键点！让 toggleRow 靠左对齐
-
+        toggleRowWrapper.alignment = .leading
 
         let endLabel = UILabel()
         endLabel.text = info.arrivalStation
