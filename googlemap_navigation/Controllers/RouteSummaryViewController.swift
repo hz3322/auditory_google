@@ -81,12 +81,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 
     private func populateSummary() {
-        // ⏱ Top time label：比如 "12:10 → 12:52"
-        if let dep = routeDepartureTime, let arr = routeArrivalTime {
-            let topTimeLabel = makeLabel(text: "\(dep) → \(arr)", font: .systemFont(ofSize: 16, weight: .medium))
-            stackView.addArrangedSubview(topTimeLabel)
-        }
-
+ 
         // 🚶 Walk to Station
         if let walkStart = walkToStationTime {
             stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Station", subtitle: walkStart))
@@ -258,11 +253,12 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             let middleLines = middle.map { (station: String) in "• \(station)" }
             intermediateLabel.text = middleLines.joined(separator: "\n")
         }
-        
+       
         let rideSummaryLabel = UILabel()
         let stopCount = info.numStops ?? 0
         let durationTime = info.durationTime ?? "-"
-        rideSummaryLabel.text = "Ride · \(stopCount) stops · \(durationTime)"
+        let durationText = info.durationText
+        rideSummaryLabel.text = "Ride · \(stopCount) stops · \(durationTime) \(durationText ?? "")"
         
         rideSummaryLabel.font = .systemFont(ofSize: 13)
         rideSummaryLabel.textColor = .white
