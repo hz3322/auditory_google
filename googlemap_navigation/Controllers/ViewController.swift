@@ -23,6 +23,10 @@ class ViewController: UITabBarController {
         let pastTripsNav = UINavigationController(rootViewController: pastTripsVC)
         pastTripsNav.tabBarItem = UITabBarItem(title: "Past Trips", image: UIImage(systemName: "clock"), tag: 1)
         
+        
+        
+        
+        
     
         // Add them to the tab bar
         viewControllers = [homeNav, pastTripsNav] // Add profileNav if you want

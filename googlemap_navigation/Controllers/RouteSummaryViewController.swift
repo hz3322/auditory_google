@@ -4,12 +4,13 @@ import CoreLocation
 class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
     var totalEstimatedTime: String?
+    
     var walkToStationTime: String?
     var walkToDestinationTime: String?
+    
     var transitInfos: [TransitInfo] = []
     var routeDepartureTime: String?
     var routeArrivalTime: String?
-
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
     private var locationManager = CLLocationManager()
@@ -164,6 +165,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
     @objc private func startNavigationTapped() {
         // Navigation logic will be implemented here
+         let vc = NavigationViewController()
+         vc.transitInfos = self.transitInfos
+         self.navigationController?.pushViewController(vc, animated: true)
     }
 
     private func makeLabel(text: String, font: UIFont) -> UILabel {

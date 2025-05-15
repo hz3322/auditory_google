@@ -11,10 +11,15 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     var destinationLocation: CLLocationCoordinate2D?
     var parsedWalkSteps: [WalkStep] = []
     var transitInfos: [TransitInfo] = []
+    var walkToStationTime: String?
+    var walkToDestinationTime: String?
 
     // MARK: - Internal state
     private var mapView: GMSMapView!
     private var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+
+    private var entryWalkMin: Double = 0.0
+    private var exitWalkMin: Double = 0.0
 
     // MARK: - UI Elements
     private let estimatedTimeLabel: UILabel = {
@@ -47,11 +52,24 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
         return view
     }()
 
+    private let topRouteLabel: UILabel = {
+        let label = UILabel()
+        label.backgroundColor = UIColor.white.withAlphaComponent(0.9)
+        label.textColor = .black
+        label.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        label.textAlignment = .center
+        label.numberOfLines = 1
+        label.layer.cornerRadius = 10
+        label.layer.masksToBounds = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+
     private let bottomEstimatedLabel: UILabel = {
         let label = UILabel()
         label.textAlignment = .center
         label.textColor = UIColor.black
-        label.numberOfLines = 1
+        label.numberOfLines = 3
         label.backgroundColor = .white
         label.layer.cornerRadius = 12
         label.layer.masksToBounds = true
@@ -96,10 +114,16 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     // MARK: - UI Setup
     private func setupUI() {
         view.addSubview(bottomCardView)
+        view.addSubview(topRouteLabel)
         bottomCardView.addSubview(bottomEstimatedLabel)
         bottomCardView.addSubview(bottomConfirmButton)
 
         NSLayoutConstraint.activate([
+            topRouteLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            topRouteLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            topRouteLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            topRouteLabel.heightAnchor.constraint(equalToConstant: 40),
+
             bottomCardView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomCardView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomCardView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
@@ -108,7 +132,7 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
             bottomEstimatedLabel.topAnchor.constraint(equalTo: bottomCardView.topAnchor, constant: 20),
             bottomEstimatedLabel.leadingAnchor.constraint(equalTo: bottomCardView.leadingAnchor, constant: 20),
             bottomEstimatedLabel.trailingAnchor.constraint(equalTo: bottomCardView.trailingAnchor, constant: -20),
-            bottomEstimatedLabel.heightAnchor.constraint(equalToConstant: 24),
+            bottomEstimatedLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
 
             bottomConfirmButton.topAnchor.constraint(equalTo: bottomEstimatedLabel.bottomAnchor, constant: 12),
             bottomConfirmButton.leadingAnchor.constraint(equalTo: bottomCardView.leadingAnchor, constant: 20),
@@ -135,13 +159,20 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
             from: userLocation,
             to: to,
             speedMultiplier: 1.0
-        ) { [weak self] walkSteps, transitSegments, totalTime, routeSteps in
+        ) {[weak self] walkSteps, transitSegments, totalTime, routeSteps, walkToStationMin, walkToDestinationMin in
             guard let self = self else { return }
             self.parsedWalkSteps = walkSteps
             self.transitInfos = transitSegments
 
             let formattedTime = String(format: "%.0f", totalTime)
             self.bottomEstimatedLabel.text = "Estimated time: \(formattedTime) min"
+            
+            self.walkToStationTime = String(format: "%.0f min", walkToStationMin)
+            self.walkToDestinationTime = String(format: "%.0f min", walkToDestinationMin)
+            
+            // Save the walk times
+            self.entryWalkMin = walkToStationMin
+            self.exitWalkMin = walkToDestinationMin
 
             self.drawPolyline(from: routeSteps)
             self.addMarkersAndPolylines()
@@ -198,23 +229,56 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
                   let startCoord = stationCoordinates[startName],
                   let endCoord = stationCoordinates[endName] else { continue }
 
+            // MARK: Marker + Station Label for Start
             let startMarker = GMSMarker(position: startCoord)
             startMarker.icon = GMSMarker.markerImage(with: .systemBlue)
-            startMarker.title = startName
             startMarker.map = mapView
+            addFloatingStationLabel(name: startName, coordinate: startCoord)
 
+            // MARK: Marker + Station Label for End
             let endMarker = GMSMarker(position: endCoord)
             endMarker.icon = GMSMarker.markerImage(with: .systemRed)
-            endMarker.title = endName
             endMarker.map = mapView
+            addFloatingStationLabel(name: endName, coordinate: endCoord)
+
+            // MARK: Polyline between stations
+            let path = GMSMutablePath()
+            path.add(startCoord)
+            path.add(endCoord)
+
+            let polyline = GMSPolyline(path: path)
+            polyline.strokeWidth = 3.5
+            polyline.strokeColor = UIColor(hex: info.lineColorHex ?? "#000000")
+            polyline.map = mapView
         }
 
+        // Adjust map camera
         if let first = transitInfos.first,
            let start = first.departureStation.flatMap({ stationCoordinates[$0] }),
            let last = transitInfos.last?.arrivalStation.flatMap({ stationCoordinates[$0] }) {
             let bounds = GMSCoordinateBounds(coordinate: start, coordinate: last)
             mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 60))
         }
+    }
+
+    private func addLabeledMarker(title: String, coordinate: CLLocationCoordinate2D, color: UIColor) {
+        let marker = GMSMarker(position: coordinate)
+        let label = UILabel()
+        label.text = title
+        label.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        label.textColor = .black
+        label.backgroundColor = .white
+        label.textAlignment = .center
+        label.layer.cornerRadius = 6
+        label.layer.masksToBounds = true
+        label.layer.borderColor = UIColor.lightGray.cgColor
+        label.layer.borderWidth = 0.5
+        label.sizeToFit()
+        label.frame = CGRect(x: 0, y: 0, width: label.frame.width + 12, height: 28)
+
+        marker.iconView = label
+        marker.groundAnchor = CGPoint(x: 0.5, y: 1.0)
+        marker.map = mapView
     }
 
     // MARK: - Confirm & Navigation
@@ -230,8 +294,24 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
             from: self,
             transitInfos: self.transitInfos,
             walkSteps: self.parsedWalkSteps,
-            estimated: self.bottomEstimatedLabel.text
+            estimated: self.bottomEstimatedLabel.text,
+            walkToStationMin: self.entryWalkMin,
+            walkToDestinationMin: self.exitWalkMin    
         )
+    }
+    
+    private func addFloatingStationLabel(name: String, coordinate: CLLocationCoordinate2D) {
+        let point = mapView.projection.point(for: coordinate)
+
+        let label = UILabel()
+        label.text = name
+        label.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        label.textColor = .black
+        label.backgroundColor = .clear
+        label.sizeToFit()
+        label.center = CGPoint(x: point.x, y: point.y - 30)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        mapView.addSubview(label)
     }
 }
 

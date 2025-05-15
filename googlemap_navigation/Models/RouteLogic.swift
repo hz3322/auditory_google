@@ -9,28 +9,34 @@ public final class RouteLogic {
 
     var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
 
-    
     // MARK: - Google Directions API Wrapper
 
     // Fetches full route including walking and transit segments using Google Directions API,
     // and augments it with intermediate stop names from TfL Journey Planner (based on nearest stations).
     func fetchRoute(
-        from userLocation: CLLocation,
-        to destinationCoord: CLLocationCoordinate2D,
-        speedMultiplier: Double,
-        completion: @escaping (_ walkSteps: [WalkStep], _ transitInfos: [TransitInfo], _ adjustedTime: Double, _ stepsRaw: [[String: Any]]) -> Void
+            from userLocation: CLLocation,
+            to destinationCoord: CLLocationCoordinate2D,
+            speedMultiplier: Double,
+            completion: @escaping (
+                    _ walkSteps: [WalkStep],
+                    _ transitInfos: [TransitInfo],
+                    _ adjustedTime: Double,
+                    _ stepsRaw: [[String: Any]],
+                    _ walkToStationMin: Double,
+                    _ walkToDestinationMin: Double
+                ) -> Void
     ) {
         loadAllTubeStations { stationsDict in
             guard let nearestStationName = self.nearestStation(to: userLocation, from: stationsDict),
                   let nearestStationCoord = stationsDict[nearestStationName] else {
-                completion([], [], 0.0, [])
+                completion([], [], 0.0, [], 0.0, 0.0)
                 return
             }
-
+            
             let urlStr = "https://maps.googleapis.com/maps/api/directions/json?origin=\(userLocation.coordinate.latitude),\(userLocation.coordinate.longitude)&destination=\(destinationCoord.latitude),\(destinationCoord.longitude)&mode=transit&transit_mode=subway|train&region=uk&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
-
+            
             guard let url = URL(string: urlStr) else { return }
-
+            
             URLSession.shared.dataTask(with: url) { data, _, _ in
                 guard let data = data,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -39,32 +45,51 @@ public final class RouteLogic {
                       let steps = legs.first?["steps"] as? [[String: Any]] else {
                     return
                 }
-
-                let (walkMin, transitMin, walkSteps, segments) = self.calculateRouteTimes(from: steps)
-                let adjustedTime = (walkMin / speedMultiplier) + transitMin
-
+                
+                let (_, transitMin, walkSteps, segments) = self.calculateRouteTimes(from: steps)
                 let transitSteps = steps.filter { $0["travel_mode"] as? String == "TRANSIT" }
                 var updatedSegments = segments
                 let group = DispatchGroup()
-
+                
+                var entryWalkMin: Double? = nil
+                var exitWalkMin: Double? = nil
+                
+                let depCoord = nearestStationCoord
+                let arrCoord = segments.last?.arrivalCoordinate ?? destinationCoord
+                
+                let dispatch = DispatchGroup()
+                dispatch.enter()
+                self.computeWalkingTime(from: userLocation.coordinate, to: depCoord) { result in
+                    entryWalkMin = result
+                    dispatch.leave()
+                }
+                
+                dispatch.enter()
+                self.computeWalkingTime(from: arrCoord, to: destinationCoord) { result in
+                    exitWalkMin = result
+                    dispatch.leave()
+                }
+                
                 for (index, seg) in segments.enumerated() {
                     guard index < transitSteps.count,
                           let startCoord = self.extractCoordinate(from: transitSteps[index], key: "start_location"),
                           let endCoord = self.extractCoordinate(from: transitSteps[index], key: "end_location") else {
                         continue
                     }
-
+                    
+                    updatedSegments[index].arrivalCoordinate = endCoord
+                    
                     group.enter()
                     self.fetchJourneyPlannerStops(fromCoord: startCoord, toCoord: endCoord) { stops in
                         var updated = seg
-
+                        
                         if stops.contains(where: { $0.lowercased().contains("bus") }) {
                             updated.stopNames = []
                             updated.numStops = 0
                             group.leave()
                             return
                         }
-
+                        
                         if index == 0 {
                             var extended = stops
                             if let first = stops.first, first != seg.departureStation {
@@ -74,21 +99,20 @@ public final class RouteLogic {
                             updated.departureStation = extended.first
                             updated.arrivalStation = extended.last
                         } else {
-                            // For subsequent segments: if no stops, fallback to stitching
-                               if stops.isEmpty {
-                                   updated.stopNames = [updatedSegments[index - 1].arrivalStation ?? "-", seg.arrivalStation ?? "-"]
-                               } else {
-                                   updated.stopNames = stops
-                                   // Fix departure station to last arrival
-                                   if updatedSegments[index - 1].arrivalStation != nil {
-                                       updated.stopNames.insert(updatedSegments[index - 1].arrivalStation!, at: 0)
-                                   }
-                               }
-                               updated.departureStation = updated.stopNames.first
-                               updated.arrivalStation = updated.stopNames.last
-                           }
+                            if stops.isEmpty {
+                                updated.stopNames = [updatedSegments[index - 1].arrivalStation ?? "-", seg.arrivalStation ?? "-"]
+                            } else {
+                                updated.stopNames = stops
+                                if updatedSegments[index - 1].arrivalStation != nil {
+                                    updated.stopNames.insert(updatedSegments[index - 1].arrivalStation!, at: 0)
+                                }
+                            }
+                            updated.departureStation = updated.stopNames.first
+                            updated.arrivalStation = updated.stopNames.last
+                        }
+                        
                         updated.numStops = max(0, updated.stopNames.count - 1)
-
+                        
                         if let times = updated.durationText?.components(separatedBy: " -"), times.count == 2 {
                             let formatter = DateFormatter()
                             formatter.dateFormat = "HH:mm"
@@ -97,18 +121,33 @@ public final class RouteLogic {
                                 updated.durationTime = "\(minutes) min"
                             }
                         }
-
+                        
                         updatedSegments[index] = updated
                         group.leave()
                     }
                 }
+                
+                dispatch.notify(queue: .main) {
+                    print("Entry walking time (min):", entryWalkMin ?? -1)
+                    print("Exit walking time (min):", exitWalkMin ?? -1)
 
-                group.notify(queue: .main) {
-                    completion(walkSteps, updatedSegments, adjustedTime, steps)
+                    
+                    group.notify(queue: .main) {
+                        let adjTime = (entryWalkMin ?? 0.0) + (exitWalkMin ?? 0.0) + transitMin
+                        completion(
+                            walkSteps,
+                            updatedSegments,
+                            adjTime,
+                            steps,
+                            entryWalkMin ?? 0.0,
+                            exitWalkMin ?? 0.0
+                        )
+                    }
                 }
             }.resume()
         }
     }
+
 
     
     private func extractCoordinate(from step: [String: Any], key: String) -> CLLocationCoordinate2D? {
@@ -158,8 +197,31 @@ public final class RouteLogic {
                return nil
            }
     
+    func computeWalkingTime(from start: CLLocationCoordinate2D, to end: CLLocationCoordinate2D, completion: @escaping (Double?) -> Void) {
+        let urlStr = "https://maps.googleapis.com/maps/api/directions/json?origin=\(start.latitude),\(start.longitude)&destination=\(end.latitude),\(end.longitude)&mode=walking&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
+
+        guard let url = URL(string: urlStr) else {
+            completion(nil)
+            return
+        }
+
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let routes = json["routes"] as? [[String: Any]],
+                  let legs = routes.first?["legs"] as? [[String: Any]],
+                  let duration = legs.first?["duration"] as? [String: Any],
+                  let value = duration["value"] as? Double else {
+                completion(nil)
+                return
+            }
+
+            completion(value / 60.0) // in minutes
+        }.resume()
+    }
+    
+    
     // Parses Google steps into walk + transit models
-   
     func calculateRouteTimes(from steps: [[String: Any]]) -> (Double, Double, [WalkStep], [TransitInfo]) {
         var walkMin = 0.0, transitMin = 0.0
         var walkSteps: [WalkStep] = []
@@ -206,7 +268,12 @@ public final class RouteLogic {
                         departureStation: dep["name"] as? String ?? "-",
                         arrivalStation: arr["name"] as? String ?? "-",
                         durationText: durationText,
-                        platform: td["departure_platform"] as? String,
+                        
+                        departurePlatform: td["departure_platform"] as? String,
+                        arrivalPlatform: td["arrival_platform"] as? String,
+                        departureCoordinate: self.extractCoordinate(from: step, key: "start_location"),
+                        arrivalCoordinate: self.extractCoordinate(from: step, key: "end_location"),
+
                         crowdLevel: crowd,
                         numStops: td["num_stops"] as? Int,
                         lineColorHex: line["color"] as? String,
@@ -325,15 +392,29 @@ public final class RouteLogic {
         }
 
     // Launches the summary screen with parsed transit info
-    func navigateToSummary(from viewController: UIViewController, transitInfos: [TransitInfo], walkSteps: [WalkStep], estimated: String?) {
+    func navigateToSummary(
+        from viewController: UIViewController,
+        transitInfos: [TransitInfo],
+        walkSteps: [WalkStep],
+        estimated: String?,
+        walkToStationMin: Double,
+        walkToDestinationMin: Double
+    ) {
         let summaryVC = RouteSummaryViewController()
         summaryVC.totalEstimatedTime = estimated
+        print("correctly passed ?? walk to station time", walkToStationMin)
+        summaryVC.walkToStationTime = String(format: "%.0f min", walkToStationMin)
+        summaryVC.walkToDestinationTime = String(format: "%.0f min", walkToDestinationMin)
         
-        summaryVC.walkToStationTime = walkSteps.first?.durationText
-        summaryVC.walkToDestinationTime = walkSteps.last?.durationText
-        
-        
-        
+        // 处理顶部时间（比如 "12:10 → 12:52"）
+        if let durationText = transitInfos.first?.durationText {
+            let parts = durationText.components(separatedBy: " -")
+            if parts.count == 2 {
+                summaryVC.routeDepartureTime = parts[0]
+                summaryVC.routeArrivalTime = parts[1]
+            }
+        }
+
         summaryVC.transitInfos = transitInfos
         viewController.navigationController?.pushViewController(summaryVC, animated: true)
     }

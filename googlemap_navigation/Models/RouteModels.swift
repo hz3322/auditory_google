@@ -1,16 +1,7 @@
 import Foundation
+import CoreLocation
 
-public struct WalkStep {
-    public let instruction: String
-    public let distanceText: String
-    public let durationText: String
-    
-    public init(instruction: String, distanceText: String, durationText: String) {
-        self.instruction = instruction
-        self.distanceText = distanceText
-        self.durationText = durationText
-    }
-}
+
 public enum CrowdLevel: String {
     case low, medium, high, unknown
 
@@ -33,12 +24,30 @@ public enum CrowdLevel: String {
     }
 }
 
+
+public struct WalkStep {
+    public let instruction: String
+    public let distanceText: String
+    public let durationText: String
+    
+    public init(instruction: String, distanceText: String, durationText: String) {
+        self.instruction = instruction
+        self.distanceText = distanceText
+        self.durationText = durationText
+    }
+}
+
 public struct TransitInfo {
     var lineName: String
     var departureStation: String?
     var arrivalStation: String?
     var durationText: String?
-    var platform: String?
+    
+    var departurePlatform: String?
+    var arrivalPlatform: String?
+    var departureCoordinate: CLLocationCoordinate2D?
+    var arrivalCoordinate: CLLocationCoordinate2D?
+    
     var crowdLevel: CrowdLevel?
     var numStops: Int?
     var lineColorHex: String?
@@ -47,29 +56,52 @@ public struct TransitInfo {
     var durationTime: String?
     
     
-    public init(
+    init(
         lineName: String,
         departureStation: String?,
         arrivalStation: String?,
         durationText: String?,
-        platform: String?,
-        crowdLevel: CrowdLevel,
+        
+        departurePlatform: String?,
+        arrivalPlatform: String?,
+        departureCoordinate: CLLocationCoordinate2D?,
+        arrivalCoordinate: CLLocationCoordinate2D?,
+        
+        crowdLevel: CrowdLevel?,
         numStops: Int?,
         lineColorHex: String?,
-        delayStatus: String?,
-        stopNames: [String] = [],
-        durationTime: String? = nil
+        delayStatus: String?
     ) {
         self.lineName = lineName
         self.departureStation = departureStation
         self.arrivalStation = arrivalStation
         self.durationText = durationText
-        self.platform = platform
+        
+        self.departurePlatform = departurePlatform
+        self.arrivalPlatform = arrivalPlatform
+        self.departureCoordinate = departureCoordinate
+        self.arrivalCoordinate = arrivalCoordinate
+        
         self.crowdLevel = crowdLevel
         self.numStops = numStops
         self.lineColorHex = lineColorHex
         self.delayStatus = delayStatus
-        self.stopNames = stopNames
-        self.durationTime = durationTime
     }
 }
+    
+    // Represents a step in the navigation sequence (e.g., "Board at Oxford Circus")
+    public struct TransitStep {
+        let title: String            // For display (e.g., station name)
+        let instruction: String      // For speech feedback (e.g., "Get on the Victoria line at Oxford Circus")
+        let coordinate: CLLocationCoordinate2D  // Location for map marker
+    }
+    
+    public struct EntryToPlatformTracker{
+        let stationName: String
+        let entranceTime: Date
+        let platformTime: Date
+        var duration: TimeInterval {
+            return platformTime.timeIntervalSince(entranceTime)
+        }
+    }
+
