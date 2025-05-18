@@ -5,7 +5,6 @@ import Foundation
 enum FeedbackType {
     case trainApproaching(platform: String)
     case trainArrived(platform: String)
-    case trainDeparted
     case transferSoon(nextLine: String)
     case delay(minutes: Int)
 
@@ -20,11 +19,10 @@ enum FeedbackType {
 
     var speechText: String? {
         switch self {
-        case .trainApproaching(let line): return "\(line) train is arriving soon. Please prepare."
-        case .trainArrived(let line): return "\(line) train has arrived. Please board quickly."
-        case .trainDeparted: return "Train has departed."
+        case .trainApproaching(let line): return "\(line) train arriving"
+        case .trainArrived(let line): return "train arrived."
         case .transferSoon: return "Transfer is coming up soon."
-        case .delay(let min): return "Train is delayed by \(min) minutes."
+        case .delay(let min): return "Train delayed by \(min) minutes."
         }
     }
 
@@ -34,8 +32,6 @@ enum FeedbackType {
             return "Approaching · Platform \(platform)"
         case .trainArrived(let platform):
             return "Arrived · Platform \(platform)"
-        case .trainDeparted:
-            return "Train Departed"
         case .transferSoon(let nextLine):
             return "Transfer to \(nextLine)"
         case .delay(let min):

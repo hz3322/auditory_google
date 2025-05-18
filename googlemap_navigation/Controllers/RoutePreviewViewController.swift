@@ -16,7 +16,7 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
 
     // MARK: - Internal state
     private var mapView: GMSMapView!
-    private var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+    private var stationCoordinates: [String: StationMeta] = [:]
 
     private var entryWalkMin: Double = 0.0
     private var exitWalkMin: Double = 0.0
@@ -226,25 +226,25 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
         for info in transitInfos {
             guard let startName = info.departureStation,
                   let endName = info.arrivalStation,
-                  let startCoord = stationCoordinates[startName],
-                  let endCoord = stationCoordinates[endName] else { continue }
+                  let startMeta = stationCoordinates[startName],
+                  let endMeta = stationCoordinates[endName] else { continue }
 
             // MARK: Marker + Station Label for Start
-            let startMarker = GMSMarker(position: startCoord)
+            let startMarker = GMSMarker(position: startMeta.coord)
             startMarker.icon = GMSMarker.markerImage(with: .systemBlue)
             startMarker.map = mapView
-            addFloatingStationLabel(name: startName, coordinate: startCoord)
+            addFloatingStationLabel(name: startName, coordinate: startMeta.coord)
 
             // MARK: Marker + Station Label for End
-            let endMarker = GMSMarker(position: endCoord)
+            let endMarker = GMSMarker(position: endMeta.coord)
             endMarker.icon = GMSMarker.markerImage(with: .systemRed)
             endMarker.map = mapView
-            addFloatingStationLabel(name: endName, coordinate: endCoord)
+            addFloatingStationLabel(name: endName, coordinate: endMeta.coord)
 
             // MARK: Polyline between stations
             let path = GMSMutablePath()
-            path.add(startCoord)
-            path.add(endCoord)
+            path.add(startMeta.coord)
+            path.add(endMeta.coord)
 
             let polyline = GMSPolyline(path: path)
             polyline.strokeWidth = 3.5
@@ -254,9 +254,9 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
 
         // Adjust map camera
         if let first = transitInfos.first,
-           let start = first.departureStation.flatMap({ stationCoordinates[$0] }),
-           let last = transitInfos.last?.arrivalStation.flatMap({ stationCoordinates[$0] }) {
-            let bounds = GMSCoordinateBounds(coordinate: start, coordinate: last)
+           let startMeta = first.departureStation.flatMap({ stationCoordinates[$0] }),
+           let lastMeta = transitInfos.last?.arrivalStation.flatMap({ stationCoordinates[$0] }) {
+            let bounds = GMSCoordinateBounds(coordinate: startMeta.coord, coordinate: lastMeta.coord)
             mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 60))
         }
     }

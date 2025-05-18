@@ -105,3 +105,8 @@ public struct TransitInfo {
         }
     }
 
+public struct StationMeta {
+    let id: String                // TfL StopPointId (比如 940GZZLUOXC)
+    let coord: CLLocationCoordinate2D
+}
+

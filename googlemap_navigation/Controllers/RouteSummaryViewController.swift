@@ -17,7 +17,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var movingDot = UIView()
     private var dotCenterYConstraint: NSLayoutConstraint?
     private var timelineMap: [String: TimelineView] = [:]
-    private var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+    private var stationCoordinates: [String: StationMeta] = [:]
     private var stopLabelMap: [String: UILabel] = [:]
 
     override func viewDidLoad() {
@@ -81,7 +81,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 
     private func populateSummary() {
- 
+        stackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
         // 🚶 Walk to Station
         if let walkStart = walkToStationTime {
             stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Station", subtitle: walkStart))
@@ -92,18 +93,46 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             let card = makeTransitCard(info: info, isTransfer: index > 0)
             stackView.addArrangedSubview(card)
 
-            // 🟡 Attach moving dot to first segment's timeline
+            // 🟡 Moving dot
             if index == 0,
                let timeline = timelineMap[info.lineName + ":" + (info.departureStation ?? "-")] {
                 setupMovingDot(attachedTo: timeline, in: card)
             }
 
-            // 📍 Fetch stop coordinates for GPS matching
-            RouteLogic.shared.fetchStopCoordinates(for: RouteLogic.shared.tflLineId(from: info.lineName) ?? "", direction: "inbound") { coords in
+            // 📍 Stop coordinates for GPS tracking
+            RouteLogic.shared.fetchStopCoordinates(
+                for: RouteLogic.shared.tflLineId(from: info.lineName) ?? "",
+                direction: "inbound"
+            ) { coords in
                 self.stationCoordinates.merge(coords) { current, _ in current }
                 self.startTrackingLocation()
             }
+         
 
+            let entryToPlatformSec: Double = 120
+            let catchTitle = UILabel()
+            catchTitle.text = "🚦 Next 3 Trains — Can You Catch?"
+            catchTitle.font = .systemFont(ofSize: 17, weight: .bold)
+            catchTitle.textColor = .systemBlue
+            stackView.addArrangedSubview(catchTitle)
+
+            CatchInfo.fetchCatchInfos(for: info, entryToPlatformSec: entryToPlatformSec) { [weak self] catchInfos in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    if catchInfos.isEmpty {
+                        let emptyLabel = UILabel()
+                        emptyLabel.text = "No predictions available"
+                        emptyLabel.textColor = .gray
+                        self.stackView.addArrangedSubview(emptyLabel)
+                    } else {
+                        for catchInfo in catchInfos {
+                            let row = CatchInfoRowView(info: catchInfo)
+                            self.stackView.addArrangedSubview(row)
+                        }
+                    }
+                }
+            }
+                   
             // 🔁 Transfer Walk Time
             if index < transitInfos.count - 1 {
                 if let transferTime = info.durationTime {
@@ -131,7 +160,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         startButton.addTarget(self, action: #selector(startNavigationTapped), for: .touchUpInside)
         stackView.addArrangedSubview(startButton)
     }
-
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         if let nearest = RouteLogic.shared.nearestStation(to: location, from: stationCoordinates),
@@ -364,5 +392,70 @@ class PaddingLabel: UILabel {
         let size = super.intrinsicContentSize
         return CGSize(width: size.width + insets.left + insets.right,
                       height: size.height + insets.top + insets.bottom)
+    }
+}
+
+
+class CatchInfoRowView: UIView {
+    init(info: CatchInfo) {
+        super.init(frame: .zero)
+        setupUI(info: info)
+    }
+    
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    
+    private func setupUI(info: CatchInfo) {
+        let platformLabel = UILabel()
+        platformLabel.text = info.platformName
+        platformLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        platformLabel.textAlignment = .left
+        platformLabel.widthAnchor.constraint(equalToConstant: 90).isActive = true
+        
+        let personLabel = UILabel()
+        personLabel.text = "🧑"
+        personLabel.font = .systemFont(ofSize: 22)
+        
+        let toPlatformTime = UILabel()
+        let min = Int(round(info.timeToStation / 60))
+        toPlatformTime.text = "\(min) min"
+        toPlatformTime.font = .systemFont(ofSize: 14)
+        toPlatformTime.textColor = .gray
+        
+        let arrow = UILabel()
+        arrow.text = "→"
+        arrow.font = .systemFont(ofSize: 16)
+        
+        let expectedArrival = UILabel()
+        expectedArrival.text = "Train: \(info.expectedArrival)"
+        expectedArrival.font = .systemFont(ofSize: 14)
+        expectedArrival.textColor = .darkGray
+        
+        let resultIcon = UILabel()
+        resultIcon.text = info.canCatch ? "✅" : "❌"
+        resultIcon.font = .systemFont(ofSize: 18)
+        resultIcon.textColor = info.canCatch ? .systemGreen : .systemRed
+        resultIcon.textAlignment = .center
+        resultIcon.widthAnchor.constraint(equalToConstant: 32).isActive = true
+
+        let hStack = UIStackView(arrangedSubviews: [
+            platformLabel,
+            personLabel,
+            toPlatformTime,
+            arrow,
+            expectedArrival,
+            resultIcon
+        ])
+        hStack.axis = .horizontal
+        hStack.spacing = 14
+        hStack.alignment = .center
+        hStack.distribution = .equalSpacing
+        addSubview(hStack)
+        hStack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            hStack.topAnchor.constraint(equalTo: self.topAnchor, constant: 6),
+            hStack.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: -6),
+            hStack.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: 12),
+            hStack.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: -12)
+        ])
     }
 }
