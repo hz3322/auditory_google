@@ -18,6 +18,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
        var destinationLocation: CLLocationCoordinate2D!
 
     // MARK: - UI Components
+    
+    
        private let mainScrollView: UIScrollView = {
            let scrollView = UIScrollView()
            scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -145,6 +147,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             cardContainer.addSubview(stationScrollView)
             stationScrollView.addSubview(stationStackView)
             contentView.addSubview(startTripButton)
+
 
             NSLayoutConstraint.activate([
                 cardContainer.topAnchor.constraint(equalTo: mapView.bottomAnchor, constant: 12),
