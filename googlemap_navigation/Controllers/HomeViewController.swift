@@ -15,6 +15,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
        private var currentLocation: CLLocationCoordinate2D?
        private var imageCache = NSCache<NSString, UIImage>()
        private var displayedPlaceNames = Set<String>()
+       var startLocation: CLLocationCoordinate2D!
+       var destinationLocation: CLLocationCoordinate2D!
 
     // MARK: - UI Components
        private let mainScrollView: UIScrollView = {
@@ -194,6 +196,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     // MARK: - Location Update
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if startTextField.text?.isEmpty ?? true {
+            startTextField.text = "Current Location"
+        }
         guard let location = locations.last else { return }
         currentLocation = location.coordinate
         mapView.animate(toLocation: location.coordinate)
@@ -215,13 +220,21 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
         func fetchOne() {
             fetchNearbyAttractionImage(coord: coord) { [weak self] image, name in
-                guard let self = self, let image = image, let name = name, !self.displayedPlaceNames.contains(name) else {
-                    fetchOne(); return
+                guard let self = self,
+                      let image = image,
+                      let name = name else {
+                    fetchOne()
+                    return
                 }
 
-                self.displayedPlaceNames.insert(name)
-
+                // 💥 确保是唯一的
                 DispatchQueue.main.async {
+                    if self.displayedPlaceNames.contains(name) {
+                        fetchOne()
+                        return
+                    }
+                    self.displayedPlaceNames.insert(name)
+
                     let card = self.makeStationCard(name: name, image: image, coord: coord)
                     self.stationStackView.addArrangedSubview(card)
 
@@ -232,12 +245,11 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                 }
             }
         }
-
         fetchOne()
     }
 
     private func fetchNearbyAttractionImage(coord: CLLocationCoordinate2D, completion: @escaping (UIImage?, String?) -> Void) {
-        let urlStr = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=\(coord.latitude),\(coord.longitude)&radius=1500&type=tourist_attraction&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
+        let urlStr = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=\(coord.latitude),\(coord.longitude)&radius=3000&type=tourist_attraction&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
         guard let url = URL(string: urlStr) else {
             completion(nil, nil); return
         }
@@ -281,6 +293,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     // MARK: - Build Card
 
     private func makeStationCard(name: String, image: UIImage, coord: CLLocationCoordinate2D) -> UIView {
+        
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.layer.cornerRadius = 10
@@ -288,6 +301,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         container.backgroundColor = .white
         container.widthAnchor.constraint(equalToConstant: 160).isActive = true
         container.heightAnchor.constraint(equalToConstant: 160).isActive = true
+        container.accessibilityLabel = name
         container.accessibilityValue = "\(coord.latitude),\(coord.longitude)"
 
         let imageView = UIImageView(image: image)
@@ -325,27 +339,37 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
 
     @objc private func cardTapped(_ sender: UITapGestureRecognizer) {
-        guard let name = sender.view?.accessibilityLabel else { return }
-        guard let coord = currentLocation else { return }
-        
-        if let value = sender.view?.accessibilityValue {
-            let parts = value.split(separator: ",")
-            if parts.count == 2,
-               let lat = Double(parts[0]), let lng = Double(parts[1]) {
-                let coord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-                let vc = RoutePreviewViewController()
-                vc.startLocation = currentLocation
-                vc.destinationLocation = coord
-                navigationController?.pushViewController(vc, animated: true)
-            }
-        }
+        guard let view = sender.view,
+              let coordStr = view.accessibilityValue,
+              let endCoord = parseCoord(from: coordStr) else { return }
 
+        if let text = startTextField.text, !text.isEmpty, text != "Current Location" {
+            // 用户输入了起点
+            geocodeAddress(text) { [weak self] startCoord in
+                guard let self = self, let startCoord = startCoord else { return }
+                DispatchQueue.main.async {
+                    self.pushRoute(start: startCoord, end: endCoord)
+                }
+            }
+        } else if let current = currentLocation {
+            // 默认使用当前位置作为起点
+            pushRoute(start: current, end: endCoord)
+        }
+    }
+    private func parseCoord(from string: String) -> CLLocationCoordinate2D? {
+        let parts = string.split(separator: ",")
+        guard parts.count == 2,
+              let lat = Double(parts[0]),
+              let lng = Double(parts[1]) else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+    }
+    
+    private func pushRoute(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D) {
         let vc = RoutePreviewViewController()
-        vc.startLocation = coord
-        vc.destinationLocation = coord // Replace with actual coord if needed
+        vc.startLocation = start
+        vc.destinationLocation = end
         navigationController?.pushViewController(vc, animated: true)
     }
-
     // MARK: - Trip Button
 
     @objc private func startTripButtonTapped() {
