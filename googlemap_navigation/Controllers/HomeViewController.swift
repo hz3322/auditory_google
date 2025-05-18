@@ -1,4 +1,3 @@
-// HomeViewController.swift (Final Fixed Version)
 
 import UIKit
 import GoogleMaps
@@ -217,29 +216,28 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
         let desiredCount = Int.random(in: 3...5)
         var fetchedCount = 0
+        var candidatesProcessed = 0
+        let maxTries = 20
 
         func fetchOne() {
-            fetchNearbyAttractionImage(coord: coord) { [weak self] image, name in
+            fetchNearbyAttractionImage(coord: coord) { [weak self] image, name, placeCoord in
                 guard let self = self,
                       let image = image,
-                      let name = name else {
-                    fetchOne()
+                      let name = name,
+                      let placeCoord = placeCoord else {
+                    if candidatesProcessed < maxTries { candidatesProcessed += 1; fetchOne() }
                     return
                 }
 
-                // 💥 确保是唯一的
                 DispatchQueue.main.async {
-                    if self.displayedPlaceNames.contains(name) {
-                        fetchOne()
-                        return
+                    if !self.displayedPlaceNames.contains(name) {
+                        self.displayedPlaceNames.insert(name)
+                        let card = self.makeStationCard(name: name, image: image, coord: placeCoord)
+                        self.stationStackView.addArrangedSubview(card)
+                        fetchedCount += 1
                     }
-                    self.displayedPlaceNames.insert(name)
-
-                    let card = self.makeStationCard(name: name, image: image, coord: coord)
-                    self.stationStackView.addArrangedSubview(card)
-
-                    fetchedCount += 1
-                    if fetchedCount < desiredCount {
+                    if fetchedCount < desiredCount && candidatesProcessed < maxTries {
+                        candidatesProcessed += 1
                         fetchOne()
                     }
                 }
@@ -247,11 +245,15 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
         fetchOne()
     }
+    
 
-    private func fetchNearbyAttractionImage(coord: CLLocationCoordinate2D, completion: @escaping (UIImage?, String?) -> Void) {
+    private func fetchNearbyAttractionImage(
+        coord: CLLocationCoordinate2D,
+        completion: @escaping (UIImage?, String?, CLLocationCoordinate2D?) -> Void
+    ) {
         let urlStr = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=\(coord.latitude),\(coord.longitude)&radius=3000&type=tourist_attraction&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
         guard let url = URL(string: urlStr) else {
-            completion(nil, nil); return
+            completion(nil, nil,nil); return
         }
 
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
@@ -259,33 +261,38 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                   let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let results = json["results"] as? [[String: Any]] else {
-                completion(nil, nil); return
+                completion(nil, nil,nil); return
             }
 
             let candidates = results.filter { $0["photos"] != nil }.prefix(10)
             guard let place = candidates.randomElement(),
-                  let name = place["name"] as? String,
-                  let photos = place["photos"] as? [[String: Any]],
-                  let reference = photos.first?["photo_reference"] as? String else {
-                completion(nil, nil); return
-            }
+                      let name = place["name"] as? String,
+                      let geometry = place["geometry"] as? [String: Any],
+                      let location = geometry["location"] as? [String: Any],
+                      let lat = location["lat"] as? Double,
+                      let lng = location["lng"] as? Double,
+                      let photos = place["photos"] as? [[String: Any]],
+                      let reference = photos.first?["photo_reference"] as? String else {
+                    completion(nil, nil, nil); return
+                }
+            let attractionCoord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
 
             let cacheKey = NSString(string: reference)
             if let cached = self.imageCache.object(forKey: cacheKey) {
-                completion(cached, name); return
-            }
+                   completion(cached, name, attractionCoord); return
+               }
 
             let photoURL = "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=\(reference)&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
             guard let url = URL(string: photoURL) else {
-                completion(nil, name); return
+                completion(nil, name,attractionCoord); return
             }
 
             URLSession.shared.dataTask(with: url) { data, _, _ in
                 guard let data = data, let image = UIImage(data: data) else {
-                    completion(nil, name); return
+                    completion(nil, name, attractionCoord); return
                 }
                 self.imageCache.setObject(image, forKey: cacheKey)
-                completion(image, name)
+                completion(image, name, attractionCoord)
             }.resume()
         }.resume()
     }
