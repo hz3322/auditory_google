@@ -3,150 +3,140 @@ import CoreLocation
 
 class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
+    // MARK: - Properties
+    /// Total estimated time for the entire route
+    var totalEstimatedTime: String?
+    
+    /// Time required to walk to the starting station
+    var walkToStationTime: String?
+    
+    /// Time required to walk from the final station to destination
+    var walkToDestinationTime: String?
+    
+    /// Array of transit information for each segment of the journey
+    var transitInfos: [TransitInfo] = []
+    
+    /// Departure time of the route
+    var routeDepartureTime: String?
+    
+    /// Arrival time of the route
+    var routeArrivalTime: String?
+    
+    // MARK: - UI Components
+    /// Main scrollable container for the route summary
+    private let scrollView = UIScrollView()
+    
+    /// Vertical stack view containing all route cards
+    private let stackView = UIStackView()
+    
+    /// Moving dot indicator showing current position
+    private var movingDot = UIView()
+    
+    /// Constraint for the moving dot's vertical position
+    private var dotCenterYConstraint: NSLayoutConstraint?
+    
+    /// Dictionary mapping line names to their timeline views
+    private var timelineMap: [String: TimelineView] = [:]
+    
+    /// Dictionary of station coordinates
+    private var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+    
+    
+    /// Dictionary mapping station names to their labels
+    private var stopLabelMap: [String: UILabel] = [:]
+    
+    // MARK: - Location Services
+    /// Manager for handling location updates
+    private var locationManager = CLLocationManager()
+
     // MARK: - Data for Progress Animation
-      var walkToStationTimeSec: Double = 0
-      var stationToPlatformTimeSec: Double = 120 // Default, will be updated when real data is available
-      var transferTimesSec: [Double] = []
-      var nextTrainArrivalDate: Date = Date()
-      var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
-  
+    var walkToStationTimeSec: Double = 0
+    var stationToPlatformTimeSec: Double = 120 // Default, will be updated when real data is available
+    var transferTimesSec: [Double] = []
+    var nextTrainArrivalDate: Date = Date()
+
     // MARK: - Progress Bar Properties
-      private var progressService: JourneyProgressService?
-      private let processBarView = UIView()
-      private let deltaTimeLabel = UILabel()
-      private let progressBarContainer = UIView()
-      private let progressBarBackground = UIView()
-      private let subwayIcon = UILabel()
-      private let personDot = UILabel()
-      private var personDotLeadingConstraint: NSLayoutConstraint?
+    private var progressService: JourneyProgressService?
+    private let processBarView = UIView()
+    private let deltaTimeLabel = UILabel()
+    private let progressBarContainer = UIView()
+    private let progressBarBackground = UIView()
+    private let subwayIcon = UILabel()
+    private let personDot = UILabel()
+    private var personDotLeadingConstraint: NSLayoutConstraint?
     
-    
-    // Location & Progress Vars
-      private var locationManager = CLLocationManager()
     private var isUsingLocationProgress = true // Track if using GPS progress
     private var userOriginLocation: CLLocation? // Where the user started
     private var userStationLocation: CLLocation? // Tube station entrance
     private var totalWalkDistance: Double = 1 // Will be set when data is loaded
-      
-      // MARK: - Other Existing Properties
-      var totalEstimatedTime: String?
-      var walkToStationTime: String?
-      var walkToDestinationTime: String?
-      var transitInfos: [TransitInfo] = []
-      var routeDepartureTime: String?
-      var routeArrivalTime: String?
-      private let scrollView = UIScrollView()
-      private let stackView = UIStackView()
-      private var movingDot = UIView()
-      private var dotCenterYConstraint: NSLayoutConstraint?
-      private var timelineMap: [String: TimelineView] = [:]
-      private var stopLabelMap: [String: UILabel] = [:]
 
-    
-    // MARK: - Lifecycle
-      override func viewDidLoad() {
-          super.viewDidLoad()
-          view.backgroundColor = .systemBackground
-          setupUI()
-          setupProgressBar()
-          setupProgressService()
-          locationManager.delegate = self
-          locationManager.requestWhenInUseAuthorization()
-          locationManager.startUpdatingLocation()
-      }
+    // MARK: - Lifecycle Methods
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        setupUI()
+        setupProgressBar()
+        setupProgressService()
+        locationManager.delegate = self
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
+    }
 
+    // MARK: - UI Setup Methods
+    /// Initializes and configures the main UI components
     private func setupUI() {
         title = "Route Summary"
         setupLayout()
         populateSummary()
     }
     
-
-
     private func setupProgressBar() {
-            progressBarContainer.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(progressBarContainer)
-            NSLayoutConstraint.activate([
-                progressBarContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 28),
-                progressBarContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-                progressBarContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
-                progressBarContainer.heightAnchor.constraint(equalToConstant: 54)
-            ])
+        progressBarContainer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(progressBarContainer)
+        NSLayoutConstraint.activate([
+            progressBarContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 28),
+            progressBarContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
+            progressBarContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+            progressBarContainer.heightAnchor.constraint(equalToConstant: 54)
+        ])
 
-            // Subway icon (right)
-            subwayIcon.text = "🚇"
-            subwayIcon.font = .systemFont(ofSize: 32)
-            subwayIcon.translatesAutoresizingMaskIntoConstraints = false
-            progressBarContainer.addSubview(subwayIcon)
-            NSLayoutConstraint.activate([
-                subwayIcon.centerYAnchor.constraint(equalTo: progressBarContainer.centerYAnchor),
-                subwayIcon.trailingAnchor.constraint(equalTo: progressBarContainer.trailingAnchor)
-            ])
+        // Subway icon (right)
+        subwayIcon.text = "🚇"
+        subwayIcon.font = .systemFont(ofSize: 32)
+        subwayIcon.translatesAutoresizingMaskIntoConstraints = false
+        progressBarContainer.addSubview(subwayIcon)
+        NSLayoutConstraint.activate([
+            subwayIcon.centerYAnchor.constraint(equalTo: progressBarContainer.centerYAnchor),
+            subwayIcon.trailingAnchor.constraint(equalTo: progressBarContainer.trailingAnchor)
+        ])
 
         // Progress bar background (between person and subway)
-           progressBarBackground.backgroundColor = UIColor.systemGray5
-           progressBarBackground.layer.cornerRadius = 18
-           progressBarBackground.translatesAutoresizingMaskIntoConstraints = false
-           progressBarContainer.addSubview(progressBarBackground)
-           NSLayoutConstraint.activate([
-               progressBarBackground.leadingAnchor.constraint(equalTo: progressBarContainer.leadingAnchor),
-               progressBarBackground.trailingAnchor.constraint(equalTo: subwayIcon.leadingAnchor, constant: -18),
-               progressBarBackground.heightAnchor.constraint(equalToConstant: 36),
-               progressBarBackground.centerYAnchor.constraint(equalTo: progressBarContainer.centerYAnchor)
-           ])
+        progressBarBackground.backgroundColor = UIColor.systemGray5
+        progressBarBackground.layer.cornerRadius = 18
+        progressBarBackground.translatesAutoresizingMaskIntoConstraints = false
+        progressBarContainer.addSubview(progressBarBackground)
+        NSLayoutConstraint.activate([
+            progressBarBackground.leadingAnchor.constraint(equalTo: progressBarContainer.leadingAnchor),
+            progressBarBackground.trailingAnchor.constraint(equalTo: subwayIcon.leadingAnchor, constant: -18),
+            progressBarBackground.heightAnchor.constraint(equalToConstant: 36),
+            progressBarBackground.centerYAnchor.constraint(equalTo: progressBarContainer.centerYAnchor)
+        ])
         
-            // Dot (person emoji )
-            personDot.text = "🧑"
-            personDot.font = .systemFont(ofSize: 34, weight: .bold)
-            personDot.translatesAutoresizingMaskIntoConstraints = false
-            progressBarBackground.addSubview(personDot)
-            personDotLeadingConstraint = personDot.leadingAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: 0)
-            personDotLeadingConstraint?.isActive = true
-            NSLayoutConstraint.activate([
-                personDot.centerYAnchor.constraint(equalTo: progressBarBackground.centerYAnchor),
-                personDot.widthAnchor.constraint(equalToConstant: 34),
-                personDot.heightAnchor.constraint(equalToConstant: 34)
-            ])
-        }
+        // Dot (person emoji)
+        personDot.text = "🧑"
+        personDot.font = .systemFont(ofSize: 34, weight: .bold)
+        personDot.translatesAutoresizingMaskIntoConstraints = false
+        progressBarBackground.addSubview(personDot)
+        personDotLeadingConstraint = personDot.leadingAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: 0)
+        personDotLeadingConstraint?.isActive = true
+        NSLayoutConstraint.activate([
+            personDot.centerYAnchor.constraint(equalTo: progressBarBackground.centerYAnchor),
+            personDot.widthAnchor.constraint(equalToConstant: 34),
+            personDot.heightAnchor.constraint(equalToConstant: 34)
+        ])
+    }
     
-//    // MARK: - CLLocationManagerDelegate
-//    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-//        guard
-//            let userLoc = locations.last,
-//            let station = stationCoord
-//        else { return }
-//        userCurrentLocation = userLoc
-//
-//        // Calculate remaining distance (in meters)
-//        let destination = CLLocation(latitude: station.latitude, longitude: station.longitude)
-//        let distanceLeft = userLoc.distance(from: destination)
-//        // Clamp to avoid weird values
-//        let progress = max(0, min(1, 1 - (distanceLeft / max(totalWalkDistance, 1))))
-//
-//        animatePersonDot(progress: progress)
-//    }
 
-    private func animatePersonDot(progress: Double) {
-        let clamped = max(0, min(progress, 1))
-        self.progressBarBackground.layoutIfNeeded()
-        let barWidth = self.progressBarBackground.bounds.width - 34
-        let newLeading = CGFloat(clamped) * barWidth
-        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut]) {
-            self.personDotLeadingConstraint?.constant = newLeading
-            self.progressBarBackground.layoutIfNeeded()
-        }
-    }
-    
-    func updateProgressBar(progress: CGFloat) {
-        // Clamp progress to [0,1]
-        let p = min(max(progress, 0), 1)
-        let barWidth = progressBarBackground.bounds.width - 34 // 34 = dot width
-        let leading = barWidth * p
-        personDotLeadingConstraint?.constant = leading
-        UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut) {
-            self.progressBarBackground.layoutIfNeeded()
-        }
-    }
     
     // Setup the progress animation service and start animation
     private func setupProgressService() {
@@ -167,6 +157,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         self.userStationLocation = stationLocation
     }
 
+    /// Sets up the layout constraints for all UI components
     private func setupLayout() {
         // Progress Bar Container
         progressBarContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -199,6 +190,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         ])
     }
 
+    /// Sets up the moving dot indicator on the timeline
     private func setupMovingDot(attachedTo timeline: TimelineView, in card: UIView) {
         guard let label = card.viewWithTag(999) else { return }
 
@@ -220,38 +212,47 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             dotCenterYConstraint!
         ])
     }
+    
 
+    // MARK: - Summary Population Methods
+    private func animatePersonDot(progress: Double) {
+        let clamped = max(0, min(progress, 1))
+        self.progressBarBackground.layoutIfNeeded()
+        let barWidth = self.progressBarBackground.bounds.width - 34
+        let newLeading = CGFloat(clamped) * barWidth
+        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut]) {
+            self.personDotLeadingConstraint?.constant = newLeading
+            self.progressBarBackground.layoutIfNeeded()
+        }
+    }
     
-    
-    
-    
-    // MARK: - Logic part
-    private func startTrackingLocation() {
-        locationManager.delegate = self
-        locationManager.requestWhenInUseAuthorization()
-        locationManager.startUpdatingLocation()
+    func updateProgressBar(progress: CGFloat) {
+        // Clamp progress to [0,1]
+        let p = min(max(progress, 0), 1)
+        let barWidth = progressBarBackground.bounds.width - 34 // 34 = dot width
+        let leading = barWidth * p
+        personDotLeadingConstraint?.constant = leading
+        UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut) {
+            self.progressBarBackground.layoutIfNeeded()
+        }
     }
 
-
+    // MARK: - Summary Population Methods
+    /// Populates the summary view with route information
     private func populateSummary() {
         stackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
         
-
-        // 🚶 1. Walk to Station time
+        // �� 1. Walk to Station time
         if let walkStart = walkToStationTime {
             stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Station", subtitle: walkStart))
         }
 
         // 🚇 Transit Segments
         for (index, info) in transitInfos.enumerated() {
-            
-            
-            
-       // a. station to platform card
+            // a. station to platform card
             stackView.addArrangedSubview(makeCard(title: "🚶 station to Platform", subtitle: "Approx. 2 min"))
             
-            
-       // b. catch info for next 3 tube
+            // b. catch info for next 3 tube
             let entryToPlatformSec: Double = 120
             let catchTitle = UILabel()
             catchTitle.text = "🚦 Next 3 Trains — Can You Catch?"
@@ -276,7 +277,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 }
             }
             
-        // c. transit card with info and moving dot
+            // c. transit card with info and moving dot
             let card = makeTransitCard(info: info, isTransfer: index > 0)
             stackView.addArrangedSubview(card)
             
@@ -296,8 +297,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 self.startTrackingLocation()
             }
 
-                   
-        // d. 🔁 Transfer Walk Time if needed
+            // d. 🔁 Transfer Walk Time if needed
             if index < transitInfos.count - 1 {
                 if let transferTime = info.durationTime {
                     stackView.addArrangedSubview(makeCard(title: "🚶 Transfer Walk", subtitle: "\(transferTime) transfer time"))
@@ -324,33 +324,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         startButton.addTarget(self, action: #selector(startNavigationTapped), for: .touchUpInside)
         stackView.addArrangedSubview(startButton)
     }
-    
-//    
-//    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-//        guard let location = locations.last else { return }
-//        if let nearest = RouteLogic.shared.nearestStation(to: location, from: stationCoordinates),
-//           let label = stopLabelMap[nearest] {
-//
-//            let key = transitInfos.first(where: { $0.stopNames.contains(nearest) })
-//                .map { $0.lineName + ":" + ($0.departureStation ?? "-") }
-//
-//            guard let timeline = key.flatMap({ timelineMap[$0] }) else { return }
-//
-//            let offset = label.convert(label.bounds, to: timeline).midY
-//
-//            dotCenterYConstraint?.isActive = false
-//            dotCenterYConstraint = movingDot.centerYAnchor.constraint(equalTo: timeline.topAnchor, constant: offset)
-//            dotCenterYConstraint?.isActive = true
-//
-//            UIView.animate(withDuration: 0.3) {
-//                self.view.layoutIfNeeded()
-//                self.movingDot.alpha = 0.2
-//                UIView.animate(withDuration: 0.3) {
-//                    self.movingDot.alpha = 1.0
-//                }
-//            }
-//        }
-//    }
+
+    /// Initializes and starts location tracking
+    private func startTrackingLocation() {
+        locationManager.delegate = self
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
+    }
+
+    // MARK: - Location Manager Delegate Methods
+    /// Handles location updates and updates the moving dot position
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let current = locations.last else { return }
         if userOriginLocation == nil {
@@ -369,6 +352,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         }
     }
 
+    /// Handles the start navigation button tap
     @objc private func startNavigationTapped() {
         // Navigation logic will be implemented here
          let vc = NavigationViewController()
@@ -416,6 +400,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         return card
     }
 
+    /// Creates a card for transit segments
     private func makeTransitCard(info: TransitInfo, isTransfer: Bool) -> UIView {
         let card = UIView()
         card.backgroundColor = UIColor(hex: info.lineColorHex ?? "#DADADA")
@@ -524,7 +509,34 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 }
 
+// MARK: - Timeline View
+/// A custom view that displays a vertical timeline
+class TimelineView: UIView {
+    // MARK: - Properties
+    /// Color of the timeline line
+    var lineColor: UIColor = .white {
+        didSet {
+            setNeedsDisplay()
+        }
+    }
+
+    // MARK: - Drawing Methods
+    /// Draws the vertical timeline
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        context.setLineWidth(2)
+        context.setStrokeColor(lineColor.cgColor)
+        let centerX = rect.width / 2
+        context.move(to: CGPoint(x: centerX, y: 0))
+        context.addLine(to: CGPoint(x: centerX, y: rect.height))
+        context.strokePath()
+    }
+}
+
+// MARK: - Color Extension
+/// Extension for UIColor to support hex color codes
 extension UIColor {
+    /// Creates a color from a hex string
     convenience init(hex: String) {
         var hexFormatted = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         if hexFormatted.hasPrefix("#") { hexFormatted.removeFirst() }
@@ -540,27 +552,6 @@ extension UIColor {
     }
 }
 
-class TimelineView: UIView {
-    var lineColor: UIColor = .white {
-        didSet {
-            setNeedsDisplay()
-        }
-    }
-
-    override func draw(_ rect: CGRect) {
-        guard let context = UIGraphicsGetCurrentContext() else { return }
-        context.setLineWidth(2)
-        context.setStrokeColor(lineColor.cgColor)
-        let centerX = rect.width / 2
-        context.move(to: CGPoint(x: centerX, y: 0))
-        context.addLine(to: CGPoint(x: centerX, y: rect.height))
-        context.strokePath()
-    }
-}
-
-
-
-
 //Utility class
 class PaddingLabel: UILabel {
     var insets = UIEdgeInsets(top: 3, left: 8, bottom: 3, right: 8)
@@ -575,8 +566,6 @@ class PaddingLabel: UILabel {
                       height: size.height + insets.top + insets.bottom)
     }
 }
-
-
 
 class CatchInfoRowView: UIView {
     init(info: CatchInfo) {
