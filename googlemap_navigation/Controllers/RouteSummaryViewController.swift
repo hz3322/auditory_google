@@ -396,6 +396,7 @@ class PaddingLabel: UILabel {
 }
 
 
+
 class CatchInfoRowView: UIView {
     init(info: CatchInfo) {
         super.init(frame: .zero)

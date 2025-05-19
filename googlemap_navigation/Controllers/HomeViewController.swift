@@ -351,19 +351,30 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     @objc private func cardTapped(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view,
               let coordStr = view.accessibilityValue,
-              let endCoord = parseCoord(from: coordStr) else { return }
+              let endCoord = parseCoord(from: coordStr),
+              let name = view.accessibilityLabel else { return } // 景点名
 
         if let text = startTextField.text, !text.isEmpty, text != "Current Location" {
             // 用户输入了起点
             geocodeAddress(text) { [weak self] startCoord in
                 guard let self = self, let startCoord = startCoord else { return }
                 DispatchQueue.main.async {
-                    self.pushRoute(start: startCoord, end: endCoord)
+                    self.pushRoute(
+                        start: startCoord,
+                        end: endCoord,
+                        startLabel: text,           // 起点名字（用户填的）
+                        destLabel: name             // 终点名字（卡片名）
+                    )
                 }
             }
         } else if let current = currentLocation {
-            // 默认使用当前位置作为起点
-            pushRoute(start: current, end: endCoord)
+            // 默认当前位置
+            self.pushRoute(
+                start: current,
+                end: endCoord,
+                startLabel: "Current Location",    // 起点名字（默认）
+                destLabel: name                    // 终点名字
+            )
         }
     }
     private func parseCoord(from string: String) -> CLLocationCoordinate2D? {
@@ -374,10 +385,12 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         return CLLocationCoordinate2D(latitude: lat, longitude: lng)
     }
     
-    private func pushRoute(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D) {
+    private func pushRoute(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D, startLabel: String?, destLabel: String?) {
         let vc = RoutePreviewViewController()
         vc.startLocation = start
         vc.destinationLocation = end
+        vc.startLabelName = startLabel
+        vc.destinationLabelName = destLabel
         navigationController?.pushViewController(vc, animated: true)
     }
     // MARK: - Trip Button

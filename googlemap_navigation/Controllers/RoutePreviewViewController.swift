@@ -1,6 +1,3 @@
-// RoutePreviewViewController.swift
-// Cleaned version with line colors and live preview, with floating station name labels next to markers.
-
 import UIKit
 import GoogleMaps
 import CoreLocation
@@ -9,6 +6,8 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     // MARK: - Inputs
     var startLocation: CLLocationCoordinate2D?
     var destinationLocation: CLLocationCoordinate2D?
+    var startLabelName: String?
+    var destinationLabelName: String?
     var parsedWalkSteps: [WalkStep] = []
     var transitInfos: [TransitInfo] = []
     var walkToStationTime: String?
@@ -163,7 +162,21 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
             guard let self = self else { return }
             self.parsedWalkSteps = walkSteps
             self.transitInfos = transitSegments
+            
+            // set toplabel content
+            if let firstTransit = transitSegments.first,
+                  let lastTransit = transitSegments.last,
+                  let departure = firstTransit.departureStation,
+                  let arrival = lastTransit.arrivalStation {
+                   self.topRouteLabel.text = "\(departure) → \(arrival)"
+               } else {
+                   self.topRouteLabel.text = "Route Preview"
+               }
+            
 
+            
+            
+            // set bottomEstimatedLabel content
             let formattedTime = String(format: "%.0f", totalTime)
             self.bottomEstimatedLabel.text = "Estimated time: \(formattedTime) min"
             
