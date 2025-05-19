@@ -1,10 +1,3 @@
-//
-//  EntryToPlatformTracker.swift
-//  googlemap_navigation
-//
-//  Created by 赵韩雪 on 15/05/2025.
-//
-
 
 // EntryToPlatformTracker.swift
 // Manager to track user walking time from station entry to platform

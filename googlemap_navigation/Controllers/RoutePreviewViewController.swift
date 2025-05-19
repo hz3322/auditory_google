@@ -104,7 +104,9 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     // MARK: - Map Setup
     private func setupMap() {
         let camera = GMSCameraPosition.camera(withLatitude: 51.5074, longitude: -0.1278, zoom: 12)
-        mapView = GMSMapView.map(withFrame: view.bounds, camera: camera)
+        mapView = GMSMapView()
+        mapView.frame = view.bounds
+        mapView.camera = camera
         mapView.delegate = self
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(mapView)
@@ -210,7 +212,7 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
                 if let td = step["transit_details"] as? [String: Any],
                    let line = td["line"] as? [String: Any],
                    let colorHex = line["color"] as? String {
-                    polyline.strokeColor = UIColor(hex: colorHex) ?? .systemBlue
+                    polyline.strokeColor = UIColor(hex: colorHex)
                 } else {
                     polyline.strokeColor = .systemBlue
                 }

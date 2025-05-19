@@ -20,7 +20,7 @@ enum FeedbackType {
     var speechText: String? {
         switch self {
         case .trainApproaching(let line): return "\(line) train arriving"
-        case .trainArrived(let line): return "train arrived."
+        case .trainArrived(_): return "train arrived."
         case .transferSoon: return "Transfer is coming up soon."
         case .delay(let min): return "Train delayed by \(min) minutes."
         }

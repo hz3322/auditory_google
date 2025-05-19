@@ -41,7 +41,8 @@ class SplashViewController: UIViewController {
 
     private func goToHome() {
         let homeVC = HomeViewController()
-        if let window = UIApplication.shared.windows.first {
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let window = windowScene.windows.first {
             window.rootViewController = UINavigationController(rootViewController: homeVC)
             window.makeKeyAndVisible()
         }

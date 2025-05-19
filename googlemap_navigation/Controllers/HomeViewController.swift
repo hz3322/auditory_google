@@ -128,7 +128,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     private func setupMap() {
             let camera = GMSCameraPosition.camera(withLatitude: 0, longitude: 0, zoom: 12)
-            mapView = GMSMapView(frame: .zero, camera: camera)
+            mapView = GMSMapView()
+            mapView.frame = view.bounds
+            mapView.camera = camera
             mapView.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(mapView)
 
@@ -362,8 +364,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                     self.pushRoute(
                         start: startCoord,
                         end: endCoord,
-                        startLabel: text,           // 起点名字（用户填的）
-                        destLabel: name             // 终点名字（卡片名）
+                        startLabel: text,
+                        destLabel: name
                     )
                 }
             }
