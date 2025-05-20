@@ -1,68 +1,93 @@
 import Foundation
 
+
 struct CatchInfo {
-    let platformName: String
     let timeToStation: TimeInterval
     let expectedArrival: String
-    var canCatch: Bool
-    //TODO:
-//    var deltaTime :
+    let expectedArrivalDate: Date
+    let canCatch: Bool
+    let timeLeftToCatch: TimeInterval
 
-    // 改成 static func!
     static func fetchCatchInfos(
         for info: TransitInfo,
         entryToPlatformSec: Double,
         completion: @escaping ([CatchInfo]) -> Void
     ) {
+        print("[DEBUG] Requested line: \(info.lineName), station: \(info.departureStation ?? "nil")")
         guard let lineId = RouteLogic.shared.tflLineId(from: info.lineName),
               let departureStation = info.departureStation else {
-            completion([]); return
+            print("[DEBUG] Missing lineId or departureStation")
+            completion([])
+            return
         }
 
-        let stationId = RouteLogic.shared.tflStationId(from: departureStation)
-        let urlStr = "https://api.tfl.gov.uk/Line/\(lineId)/Arrivals/\(stationId ?? "")"
-        guard let url = URL(string: urlStr) else { completion([]); return }
-
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data = data,
-                  let arrs = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                completion([]); return
+        // STEP 1: Resolve Station ID asynchronously!
+        StationIdResolver.shared.tflStationId(from: departureStation) { stationId in
+            guard let stationId = stationId else {
+                print("[DEBUG] Could not resolve stationId for \(departureStation)")
+                completion([])
+                return
             }
-
-            let platformTarget = info.departurePlatform ?? ""
-            let now = Date()
-            var predictions: [CatchInfo] = []
-            let formatter = ISO8601DateFormatter()
-
-            let filtered = arrs.filter { dict in
-                guard let platform = dict["platformName"] as? String else { return false }
-                return platform == platformTarget
-            }.sorted { d1, d2 in
-                let t1 = (d1["expectedArrival"] as? String).flatMap { formatter.date(from: $0) } ?? Date.distantFuture
-                let t2 = (d2["expectedArrival"] as? String).flatMap { formatter.date(from: $0) } ?? Date.distantFuture
-                return t1 < t2
+            let urlStr = "https://api.tfl.gov.uk/Line/\(lineId)/Arrivals/\(stationId)?app_key=0bc9522b0b77427eb20e858550d6a072"
+            guard let url = URL(string: urlStr) else {
+                print("[DEBUG] Invalid URL: \(urlStr)")
+                completion([])
+                return
             }
+            print("[DEBUG] TFL Arrivals URL: \(url.absoluteString)")
 
-            for dict in filtered.prefix(3) {
-                guard let expectedArrivalStr = dict["expectedArrival"] as? String,
-                      let expectedArrival = formatter.date(from: expectedArrivalStr),
-                      let platformName = dict["platformName"] as? String else { continue }
-
-                let secondsUntil = expectedArrival.timeIntervalSince(now)
-                let canCatch = secondsUntil > entryToPlatformSec
-                let expectedArrivalText = DateFormatter.shortTime.string(from: expectedArrival)
-                let catchInfo = CatchInfo(
-                    platformName: platformName,
-                    timeToStation: entryToPlatformSec,
-                    expectedArrival: expectedArrivalText,
-                    canCatch: canCatch
-                )
-                predictions.append(catchInfo)
-            }
-            DispatchQueue.main.async {
-                completion(predictions)
-            }
-        }.resume()
+            URLSession.shared.dataTask(with: url) { data, _, _ in
+                guard let data = data else {
+                    print("[DEBUG] No data from TFL API")
+                    completion([])
+                    return
+                }
+                if let raw = String(data: data, encoding: .utf8) {
+                    print("[DEBUG] Raw API Response: \(raw.prefix(300)) ...")
+                }
+                guard let arrs = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                    print("[DEBUG] Failed to parse JSON")
+                    completion([])
+                    return
+                }
+                print("[DEBUG] Parsed \(arrs.count) arrival predictions from API.")
+                let now = Date()
+                let isoFormatter = ISO8601DateFormatter()
+                var predictions: [CatchInfo] = []
+                for dict in arrs {
+                    guard let expectedArrivalStr = dict["expectedArrival"] as? String else {
+                        print("[DEBUG] Skipped: No expectedArrival in \(dict)")
+                        continue
+                    }
+                    guard let expectedArrivalDate = isoFormatter.date(from: expectedArrivalStr) else {
+                        print("[DEBUG] Skipped: Could not parse date '\(expectedArrivalStr)'")
+                        continue
+                    }
+                    let secondsUntil = expectedArrivalDate.timeIntervalSince(now)
+                    let timeLeftToCatch = secondsUntil - entryToPlatformSec
+                    let canCatch = timeLeftToCatch > 0
+                    let expectedArrivalText = DateFormatter.shortTime.string(from: expectedArrivalDate)
+                    print("[DEBUG] Train: arrival \(expectedArrivalText), secondsUntil \(Int(secondsUntil)), timeLeftToCatch \(Int(timeLeftToCatch)), canCatch \(canCatch)")
+                    let catchInfo = CatchInfo(
+                        timeToStation: entryToPlatformSec,
+                        expectedArrival: expectedArrivalText,
+                        expectedArrivalDate: expectedArrivalDate,
+                        canCatch: canCatch,
+                        timeLeftToCatch: timeLeftToCatch
+                    )
+                    predictions.append(catchInfo)
+                }
+                let catchable = predictions.filter { $0.canCatch }
+                print("[DEBUG] Catchable train count: \(catchable.count)")
+                let top3 = catchable.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }.prefix(3)
+                if top3.isEmpty {
+                    print("[DEBUG] No catchable trains found after filtering.")
+                }
+                DispatchQueue.main.async {
+                    completion(Array(top3))
+                }
+            }.resume()
+        }
     }
 }
 
@@ -72,4 +97,37 @@ extension DateFormatter {
         df.dateFormat = "HH:mm"
         return df
     }()
+}
+
+class StationIdResolver {
+    static let shared = StationIdResolver()
+    private var cache: [String: String] = [:] // [lowercasedName: id]
+
+    func tflStationId(from stationName: String, completion: @escaping (String?) -> Void) {
+        let key = stationName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let cachedId = cache[key] {
+            completion(cachedId)
+            return
+        }
+        let query = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+        let urlStr = "https://api.tfl.gov.uk/StopPoint/Search?query=\(query)&modes=tube"
+        guard let url = URL(string: urlStr) else {
+            completion(nil)
+            return
+        }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard
+                let data = data,
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let matches = json["matches"] as? [[String: Any]],
+                let first = matches.first,
+                let id = first["id"] as? String
+            else {
+                completion(nil)
+                return
+            }
+            self.cache[key] = id
+            completion(id)
+        }.resume()
+    }
 }

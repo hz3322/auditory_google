@@ -55,6 +55,9 @@ public struct TransitInfo {
     var stopNames: [String] = []
     var durationTime: String?
     
+//    var walkToStationSec: Double?   // 单位秒，可选（比如第一段有，Transfer段无）
+//    var stationToPlatformSec: Double? //
+    
     
     init(
         lineName: String,
@@ -70,7 +73,11 @@ public struct TransitInfo {
         crowdLevel: CrowdLevel?,
         numStops: Int?,
         lineColorHex: String?,
-        delayStatus: String?
+        delayStatus: String?,
+        
+//        walkToStationSec: Double?,
+//        stationToPlatformSec: Double?
+        
     ) {
         self.lineName = lineName
         self.departureStation = departureStation
@@ -86,6 +93,9 @@ public struct TransitInfo {
         self.numStops = numStops
         self.lineColorHex = lineColorHex
         self.delayStatus = delayStatus
+//        
+//        self.walkToStationSec = walkToStationSec
+//        self.stationToPlatformSec = stationToPlatformSec
     }
 }
     

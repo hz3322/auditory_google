@@ -279,6 +279,8 @@ public final class RouteLogic {
                         numStops: td["num_stops"] as? Int,
                         lineColorHex: line["color"] as? String,
                         delayStatus: delayStatus
+                        
+//                        walkToStationSec: <#T##Double?#>
                     )
                     transitInfos.append(info)
                 }

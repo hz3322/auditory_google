@@ -241,27 +241,32 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     /// Populates the summary view with route information
     private func populateSummary() {
         stackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        
-        // 1. Walk to Station time
+
+        // 1. Walk to Station
         if let walkStart = walkToStationTime {
             stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Station", subtitle: walkStart))
         }
-        
-        print("Transit count:", transitInfos.count)
 
-        // 🚇 Transit Segments
+        // 2. For Each Transit Segment
         for (index, info) in transitInfos.enumerated() {
-            // a. station to platform card
-            stackView.addArrangedSubview(makeCard(title: "🚶 station to Platform", subtitle: "Approx. 2 min"))
-            
-            // b. catch info for next 3 tube
-            let entryToPlatformSec: Double = 120
+            // (a) Walk from entrance to platform (optional, if needed)
+            stackView.addArrangedSubview(makeCard(title: "🚶 Station to Platform", subtitle: "Approx. 2 min"))
+
+            // (b) Next 3 Trains Section for this line
+            let catchSectionView = UIStackView()
+            catchSectionView.axis = .vertical
+            catchSectionView.spacing = 8
+
             let catchTitle = UILabel()
-            catchTitle.text = "🚦 Next 3 Trains — Can You Catch?"
+            catchTitle.text = "🚦 Next 3 Trains Information"
             catchTitle.font = .systemFont(ofSize: 17, weight: .bold)
             catchTitle.textColor = .systemBlue
-            stackView.addArrangedSubview(catchTitle)
+            catchSectionView.addArrangedSubview(catchTitle)
+            
+            stackView.addArrangedSubview(catchSectionView)
 
+            let entryToPlatformSec: Double = 600
+            
             CatchInfo.fetchCatchInfos(for: info, entryToPlatformSec: entryToPlatformSec) { [weak self] catchInfos in
                 guard let self = self else { return }
                 DispatchQueue.main.async {
@@ -269,37 +274,21 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                         let emptyLabel = UILabel()
                         emptyLabel.text = "No predictions available"
                         emptyLabel.textColor = .gray
-                        self.stackView.addArrangedSubview(emptyLabel)
+                        catchSectionView.addArrangedSubview(emptyLabel)
                     } else {
                         for catchInfo in catchInfos {
                             let row = CatchInfoRowView(info: catchInfo)
-                            self.stackView.addArrangedSubview(row)
+                            catchSectionView.addArrangedSubview(row)
                         }
                     }
                 }
             }
-            
-            // c. transit card with info and moving dot
+
+            // (c) Add Transit Card for this segment
             let card = makeTransitCard(info: info, isTransfer: index > 0)
             stackView.addArrangedSubview(card)
-            
-            // 🟡 Moving dot
-            if index == 0,
-               let timeline = timelineMap[info.lineName + ":" + (info.departureStation ?? "-")] {
-                setupMovingDot(attachedTo: timeline, in: card)
-            }
 
-            // 📍 Stop coordinates for GPS tracking
-            RouteLogic.shared.fetchStopCoordinates(
-                for: RouteLogic.shared.tflLineId(from: info.lineName) ?? "",
-                direction: "inbound"
-            ) { coords in
-                let newCoords: [String: CLLocationCoordinate2D] = coords.mapValues { $0.coord }
-                self.stationCoordinates.merge(newCoords) { current, _ in current }
-                self.startTrackingLocation()
-            }
-
-            // d. 🔁 Transfer Walk Time if needed
+            // (d) If there's a transfer after this segment, show transfer walk time
             if index < transitInfos.count - 1 {
                 if let transferTime = info.durationTime {
                     stackView.addArrangedSubview(makeCard(title: "🚶 Transfer Walk", subtitle: "\(transferTime) transfer time"))
@@ -309,12 +298,12 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             }
         }
 
-        // 🚶 Final Walk to Destination
+        // 3. Final Walk to Destination
         if let walkEnd = walkToDestinationTime {
             stackView.addArrangedSubview(makeCard(title: "🚶 Walk to Destination", subtitle: walkEnd))
         }
 
-        // 🟢 Start Navigation Button
+        // 4. Start Navigation Button
         let startButton = UIButton(type: .system)
         startButton.setTitle("Start Navigation", for: .normal)
         startButton.setTitleColor(UIColor.label, for: .normal)
@@ -587,66 +576,76 @@ class PaddingLabel: UILabel {
 }
 
 class CatchInfoRowView: UIView {
+    // Thresholds for coloring, if you still want them:
+    private let missedThreshold = 0
+    private let yellowThreshold = 15
+    private let greenThreshold = 30
+
     init(info: CatchInfo) {
         super.init(frame: .zero)
         setupUI(info: info)
     }
-    
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    
-    private func setupUI(info: CatchInfo) {
-        let platformLabel = UILabel()
-        platformLabel.text = info.platformName
-        platformLabel.font = .systemFont(ofSize: 16, weight: .semibold)
-        platformLabel.textAlignment = .left
-        platformLabel.widthAnchor.constraint(equalToConstant: 90).isActive = true
-        
-        let personLabel = UILabel()
-        personLabel.text = "🧑"
-        personLabel.font = .systemFont(ofSize: 22)
-        
-        let toPlatformTime = UILabel()
-        let min = Int(round(info.timeToStation / 60))
-        toPlatformTime.text = "\(min) min"
-        toPlatformTime.font = .systemFont(ofSize: 14)
-        toPlatformTime.textColor = .gray
-        
-        let arrow = UILabel()
-        arrow.text = "→"
-        arrow.font = .systemFont(ofSize: 16)
-        
-        let expectedArrival = UILabel()
-        expectedArrival.text = "Train: \(info.expectedArrival)"
-        expectedArrival.font = .systemFont(ofSize: 14)
-        expectedArrival.textColor = .darkGray
-        
-        let resultIcon = UILabel()
-        resultIcon.text = info.canCatch ? "✅" : "❌"
-        resultIcon.font = .systemFont(ofSize: 18)
-        resultIcon.textColor = info.canCatch ? .systemGreen : .systemRed
-        resultIcon.textAlignment = .center
-        resultIcon.widthAnchor.constraint(equalToConstant: 32).isActive = true
 
-        let hStack = UIStackView(arrangedSubviews: [
-            platformLabel,
-            personLabel,
-            toPlatformTime,
-            arrow,
-            expectedArrival,
-            resultIcon
-        ])
-        hStack.axis = .horizontal
-        hStack.spacing = 14
-        hStack.alignment = .center
-        hStack.distribution = .equalSpacing
-        addSubview(hStack)
-        hStack.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            hStack.topAnchor.constraint(equalTo: self.topAnchor, constant: 6),
-            hStack.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: -6),
-            hStack.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: 12),
-            hStack.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: -12)
-        ])
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func setupUI(info: CatchInfo) {
+            let personLabel = UILabel()
+            personLabel.text = "🧑"
+            personLabel.font = .systemFont(ofSize: 22)
+
+            let expectedArrival = UILabel()
+            expectedArrival.text = "Train: \(info.expectedArrival)"
+            expectedArrival.font = .systemFont(ofSize: 16)
+            expectedArrival.textColor = .darkGray
+
+            // 显示 timeLeftToCatch
+            let timeLeftLabel = UILabel()
+            let timeLeft = Int(round(info.timeLeftToCatch))
+            if timeLeft > 0 {
+                timeLeftLabel.text = "\(timeLeft) sec left"
+                timeLeftLabel.textColor = .systemGreen
+            } else {
+                timeLeftLabel.text = "Missed"
+                timeLeftLabel.textColor = .systemRed
+            }
+            timeLeftLabel.font = .systemFont(ofSize: 16)
+            timeLeftLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+
+            let resultIcon = UILabel()
+            resultIcon.text = info.canCatch ? "✅" : "❌"
+            resultIcon.font = .systemFont(ofSize: 22)
+            resultIcon.textColor = info.canCatch ? .systemGreen : .systemRed
+            resultIcon.textAlignment = .center
+            resultIcon.widthAnchor.constraint(equalToConstant: 32).isActive = true
+
+            let hourglass = UILabel()
+            hourglass.text = "⏳"
+            hourglass.font = .systemFont(ofSize: 18)
+
+            let hStack = UIStackView(arrangedSubviews: [
+                personLabel,
+                expectedArrival,
+                timeLeftLabel,
+                hourglass,
+                resultIcon
+            ])
+            hStack.axis = .horizontal
+            hStack.spacing = 18
+            hStack.alignment = .center
+            hStack.distribution = .fill
+            hStack.isLayoutMarginsRelativeArrangement = true
+            hStack.layoutMargins = UIEdgeInsets(top: 8, left: 18, bottom: 8, right: 18)
+
+            addSubview(hStack)
+            hStack.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                hStack.topAnchor.constraint(equalTo: self.topAnchor),
+                hStack.bottomAnchor.constraint(equalTo: self.bottomAnchor),
+                hStack.leadingAnchor.constraint(equalTo: self.leadingAnchor),
+                hStack.trailingAnchor.constraint(equalTo: self.trailingAnchor)
+            ])
+            self.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.92)
+            self.layer.cornerRadius = 8
     }
 }
 
