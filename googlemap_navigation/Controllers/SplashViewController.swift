@@ -1,13 +1,20 @@
 import UIKit
 
 class SplashViewController: UIViewController {
+    private let logoImageView: UIImageView = {
+        let imageView = UIImageView(image: UIImage(named: "ontimego_logo"))
+        imageView.contentMode = .scaleAspectFit
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+    
     private let sloganLabel: UILabel = {
         let label = UILabel()
-        label.text = "All the info, none of the stress. Always catch your tube, your way."
+        label.text = "All the catch info here!"
         label.font = .systemFont(ofSize: 22, weight: .semibold)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.textColor = .systemBlue
+        label.textColor = .black
         label.alpha = 0
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -16,6 +23,15 @@ class SplashViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .white
+        
+        view.addSubview(logoImageView)
+                NSLayoutConstraint.activate([
+                    logoImageView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                    logoImageView.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -90),
+                    logoImageView.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.6),
+                    logoImageView.heightAnchor.constraint(equalTo: logoImageView.widthAnchor, multiplier: 0.4)
+                ])
+        
         view.addSubview(sloganLabel)
         NSLayoutConstraint.activate([
             sloganLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -30,7 +46,7 @@ class SplashViewController: UIViewController {
     }
 
     private func showSloganAndProceed() {
-        UIView.animate(withDuration: 0.9, delay: 0, options: .curveEaseIn, animations: {
+        UIView.animate(withDuration: 1.5, delay: 0, options: .curveEaseIn, animations: {
             self.sloganLabel.alpha = 1
         }, completion: { _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {

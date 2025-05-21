@@ -78,6 +78,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+//        let _ = addLogoTitleHeader(title: "Route summary")
 
         // 1. Set up UI structure first
         setupProgressBar()

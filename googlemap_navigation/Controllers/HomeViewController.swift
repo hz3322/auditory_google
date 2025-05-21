@@ -87,7 +87,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .white
-        title = "Home"
+        let logoTitleHeader = LogoTitleHeaderView(title: "Home")
+        navigationItem.titleView = logoTitleHeader
 
         setupMap()
         setupScrollViewLayout()
