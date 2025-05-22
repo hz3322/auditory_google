@@ -4,6 +4,8 @@ import GooglePlaces
 import CoreLocation
 
 class LocationCardView: UIView {
+    private let label = UILabel()
+    
     init(locationText: String) {
         super.init(frame: .zero)
         backgroundColor = UIColor(red: 243/255, green: 247/255, blue: 255/255, alpha: 1)
@@ -12,7 +14,6 @@ class LocationCardView: UIView {
         icon.tintColor = .systemBlue
         icon.translatesAutoresizingMaskIntoConstraints = false
         
-        let label = UILabel()
         label.text = locationText
         label.font = .systemFont(ofSize: 16, weight: .medium)
         label.textColor = .systemBlue
@@ -32,5 +33,12 @@ class LocationCardView: UIView {
         ])
         heightAnchor.constraint(equalToConstant: 46).isActive = true
     }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    
+    func updateLocationText(_ text: String) {
+        label.text = text
+    }
+    
+  
 }

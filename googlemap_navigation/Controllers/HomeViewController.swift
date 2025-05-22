@@ -7,25 +7,49 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     // MARK: - Properties
     private let locationManager = CLLocationManager()
-    private var mapView: GMSMapView!
     private var currentLocation: CLLocationCoordinate2D?
     private var imageCache = NSCache<NSString, UIImage>()
     private var displayedPlaceNames = Set<String>()
     private var startTextField: UITextField!
     private var destinationTextField: UITextField!
-    private let frequentStack = UIStackView()
-    
+    private var profile: UserProfile!
+    private var areaLabel: UILabel!
+    private var greetingAreaStack: UIStackView?
 
-    // MARK: - UI Components
-   
+
     // MARK: - UI Components
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
+    private var locationCard: LocationCardView!
+    private let frequentStack = UIStackView()
+    private var mapView: GMSMapView!
     
     // -- Custom sections
-    private lazy var greetingHeader = GreetingHeaderView(name: "Hanxue", time: "Good Morning")
-    private lazy var locationCard = LocationCardView(locationText: "Current Location: London")
+  
+    func getGreetingText() -> String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 0..<12:
+            return "Good Morning"
+        case 12..<18:
+            return "Good Afternoon"
+        default:
+            return "Good Evening"
+        }
+    }
     
+    func fetchCurrentAreaName(from location: CLLocationCoordinate2D, completion: @escaping (String) -> Void) {
+        let geo = CLGeocoder()
+        let loc = CLLocation(latitude: location.latitude, longitude: location.longitude)
+        geo.reverseGeocodeLocation(loc) { placemarks, error in
+            let placemark = placemarks?.first
+            let area = placemark?.subLocality ??
+                       placemark?.name ??
+                       placemark?.locality ??
+                       "Unknown Location"
+            completion(area)
+        }
+    }
     
     func makeRoundedTextField(placeholder: String) -> UITextField {
         let tf = UITextField()
@@ -42,6 +66,57 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         tf.translatesAutoresizingMaskIntoConstraints = false
         tf.heightAnchor.constraint(equalToConstant: 48).isActive = true
         return tf
+    }
+    
+    private func makeGreetingWithAreaBlock(greeting: String, username: String, area: String) -> UIStackView {
+        
+        // Greeting label
+        let greetingLabel = UILabel()
+        greetingLabel.numberOfLines = 2
+        greetingLabel.text = "Hi, \(username)! 👋\n\(greeting)"
+        greetingLabel.font = .systemFont(ofSize: 28, weight: .bold)
+        greetingLabel.textColor = UIColor(red: 41/255, green: 56/255, blue: 80/255, alpha: 1)
+        
+        // Area Block
+        let areaBlock = UIView()
+        areaBlock.backgroundColor = UIColor(red: 230/255, green: 239/255, blue: 250/255, alpha: 1)
+        areaBlock.layer.cornerRadius = 13
+        areaBlock.layer.masksToBounds = true
+
+        let areaLabel = UILabel()
+        areaLabel.numberOfLines = 0 
+        areaLabel.lineBreakMode = .byWordWrapping
+        areaLabel.textAlignment = .center
+        
+        areaLabel.text = "Locating..."
+        areaLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        areaLabel.textColor = UIColor(red: 42/255, green: 95/255, blue: 176/255, alpha: 1)
+        areaLabel.textAlignment = .center
+        areaLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        areaBlock.addSubview(areaLabel)
+        self.areaLabel = areaLabel
+        NSLayoutConstraint.activate([
+            areaLabel.leadingAnchor.constraint(equalTo: areaBlock.leadingAnchor, constant: 14),
+            areaLabel.trailingAnchor.constraint(equalTo: areaBlock.trailingAnchor, constant: -14),
+            areaLabel.topAnchor.constraint(equalTo: areaBlock.topAnchor, constant: 4),
+            areaLabel.bottomAnchor.constraint(equalTo: areaBlock.bottomAnchor, constant: -4)
+        ])
+        areaBlock.translatesAutoresizingMaskIntoConstraints = false
+        areaBlock.setContentHuggingPriority(.required, for: .horizontal)
+        areaBlock.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        // 横向 Stack
+        let stack = UIStackView(arrangedSubviews: [greetingLabel, areaBlock])
+        stack.axis = .horizontal
+        stack.alignment = .fill
+        stack.spacing = 12
+        
+        areaBlock.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        areaBlock.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        greetingLabel.setContentHuggingPriority(.required, for: .horizontal)
+        greetingLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return stack
     }
 
        private let startTripButton: UIButton = {
@@ -65,6 +140,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         setupContent()
         setupLocationManager()
         setupKeyboardNotifications()
+        
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.displayAttractions() }
     }
     
@@ -93,33 +169,45 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
        }
 
        private func setupContent() {
-           // 1. Greeting
-           contentStack.addArrangedSubview(greetingHeader)
-           // 2. Location Card
-           contentStack.addArrangedSubview(locationCard)
-           // 3. Search Bars
+           // 1. Greeting and area block
+           // TODO : 需要从data base 调用
+           let profile = UserProfile(name: "Hanxue")
+           let username = profile.name ?? "User"
+           let greeting = getGreetingText()
+
+           // 区域初始化先用 "Locating..."，定位完后记得刷新
+           let greetingAreaStack = makeGreetingWithAreaBlock(greeting: greeting, username: username, area: "Locating...")
+           contentStack.addArrangedSubview(greetingAreaStack)
+           self.greetingAreaStack = greetingAreaStack
+
+         
+           // 2. Search Bars
            startTextField = makeRoundedTextField(placeholder: "From (Current Location)")
            destinationTextField = makeRoundedTextField(placeholder: "To (Enter Destination)")
            let searchStack = UIStackView(arrangedSubviews: [startTextField, destinationTextField])
            searchStack.axis = .vertical
            searchStack.spacing = 10
            contentStack.addArrangedSubview(searchStack)
-           // 4. MapView
+           // 3. MapView
+           let camera = GMSCameraPosition.camera(withLatitude: 0, longitude: 0, zoom: 12)
            mapView = GMSMapView()
+           mapView.camera = camera
            mapView.layer.cornerRadius = 18
            mapView.translatesAutoresizingMaskIntoConstraints = false
            mapView.heightAnchor.constraint(equalToConstant: 220).isActive = true
            contentStack.addArrangedSubview(mapView)
-           // 5. Frequent Places (Fake data example)
+           // 4. Frequent Places (Fake data example)
            let frequentLabel = UILabel()
            frequentLabel.text = "Frequent Places"
            frequentLabel.font = .boldSystemFont(ofSize: 19)
            frequentLabel.textColor = .systemBlue
            contentStack.addArrangedSubview(frequentLabel)
-           // 6. Frequent places cards
+           // 5. Frequent places cards
            let frequentStack = makeHorizontalCardStack(cardTitles: ["Imperial College", "Oxford Circus", "Baker Street"])
+           frequentStack.axis = .horizontal
+           frequentStack.spacing = 16
            contentStack.addArrangedSubview(frequentStack)
-           // 7. Near of You
+           // 6. Near of You
            let nearLabel = UILabel()
            nearLabel.text = "Near Of You"
            nearLabel.font = .boldSystemFont(ofSize: 19)
@@ -174,11 +262,29 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
         guard let location = locations.last else { return }
         currentLocation = location.coordinate
+        
+        if let coord = currentLocation {
+            fetchCurrentAreaName(from: coord) { area in
+                DispatchQueue.main.async {
+                    self.updateAreaBlock("Current Location: \(area)")
+    
+                }
+            }
+        }
+        
         mapView.animate(toLocation: location.coordinate)
         mapView.clear()
         GMSMarker(position: location.coordinate).map = mapView
         displayAttractions()
         locationManager.stopUpdatingLocation()
+    }
+    
+    func updateAreaBlock(_ area: String) {
+        if let greetingAreaStack = self.greetingAreaStack,
+           let areaBlock = greetingAreaStack.arrangedSubviews.last as? UIView,
+           let areaLabel = areaBlock.subviews.first(where: { $0 is UILabel }) as? UILabel {
+            areaLabel.text = area
+        }
     }
 
     // MARK: - Attractions Loading
@@ -486,3 +592,4 @@ extension UITextField {
         self.leftViewMode = .always
     }
 }
+
