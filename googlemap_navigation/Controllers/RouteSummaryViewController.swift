@@ -73,6 +73,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var userOriginLocation: CLLocation? // Where the user started
     private var userStationLocation: CLLocation? // Tube station entrance
     private var totalWalkDistance: Double = 1 // Will be set when data is loaded
+    
+    private var nextTrainsTimer: Timer?
+
 
     // MARK: - Lifecycle Methods
     override func viewDidLoad() {
@@ -119,7 +122,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             stationEmoji.centerYAnchor.constraint(equalTo: progressBarBackground.centerYAnchor),
             stationEmoji.leadingAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: 10)
         ])
-        // 3. stationary platform emoji（最右）
+        // 3. stationary platform emoji
         platformEmoji.text = "🚇"
         platformEmoji.font = .systemFont(ofSize: 28)
         platformEmoji.translatesAutoresizingMaskIntoConstraints = false
@@ -393,13 +396,13 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     /// Creates a card for transit segments
     private func makeTransitCard(info: TransitInfo, isTransfer: Bool) -> UIView {
         let card = UIView()
-        // 设置默认颜色，以防 lineColorHex 为空
+        
         let backgroundColor = UIColor(hex: info.lineColorHex ?? "#DADADA")
         card.backgroundColor = backgroundColor
         card.layer.cornerRadius = 10
 
         let timeline = TimelineView()
-        // 使用白色作为时间线的颜色，确保可见性
+        
         timeline.lineColor = .white
         timeline.translatesAutoresizingMaskIntoConstraints = false
         timeline.widthAnchor.constraint(equalToConstant: 20).isActive = true
@@ -413,7 +416,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         let lineBadgeLabel = PaddingLabel()
         lineBadgeLabel.text = info.lineName
         lineBadgeLabel.font = .boldSystemFont(ofSize: 13)
-        // 确保文本颜色与背景形成对比
+        
         lineBadgeLabel.textColor = backgroundColor.isLight ? .black : .white
         lineBadgeLabel.backgroundColor = backgroundColor.isLight ? .white.withAlphaComponent(0.8) : .black.withAlphaComponent(0.8)
         lineBadgeLabel.layer.cornerRadius = 6
@@ -423,7 +426,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         let startLabel = UILabel()
         startLabel.text = info.departureStation
         startLabel.font = .boldSystemFont(ofSize: 16)
-        // 确保文本颜色与背景形成对比
+        
         startLabel.textColor = backgroundColor.isLight ? .black : .white
         startLabel.tag = 999
         stopLabelMap[startLabel.text ?? ""] = startLabel
@@ -431,12 +434,12 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         let crowdLabel = UILabel()
         crowdLabel.text = info.delayStatus
         crowdLabel.font = .systemFont(ofSize: 14)
-        // 确保文本颜色与背景形成对比
+        
         crowdLabel.textColor = backgroundColor.isLight ? .black : .white
 
         let intermediateLabel = UILabel()
         intermediateLabel.font = .systemFont(ofSize: 13)
-        // 确保文本颜色与背景形成对比
+        
         intermediateLabel.textColor = backgroundColor.isLight ? .black : .white
         intermediateLabel.numberOfLines = 0
         intermediateLabel.isHidden = true
@@ -455,13 +458,13 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         rideSummaryLabel.text = "Ride · \(stopCount) stops · \(durationTime) \(durationText ?? "")"
         
         rideSummaryLabel.font = .systemFont(ofSize: 13)
-        // 确保文本颜色与背景形成对比
+        
         rideSummaryLabel.textColor = backgroundColor.isLight ? .black : .white
 
         let toggleButton = UIButton(type: .system)
         let arrowImage = UIImage(systemName: "chevron.down")?.withRenderingMode(.alwaysTemplate)
         toggleButton.setImage(arrowImage, for: .normal)
-        // 确保按钮颜色与背景形成对比
+        
         toggleButton.tintColor = backgroundColor.isLight ? .black : .white
         toggleButton.transform = .identity
         toggleButton.addAction(UIAction { _ in
@@ -483,7 +486,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         let endLabel = UILabel()
         endLabel.text = info.arrivalStation
         endLabel.font = .boldSystemFont(ofSize: 16)
-        // 确保文本颜色与背景形成对比
+     
         endLabel.textColor = backgroundColor.isLight ? .black : .white
         stopLabelMap[endLabel.text ?? ""] = endLabel
 
@@ -561,6 +564,9 @@ extension UIColor {
     }
 }
 
+
+
+
 //Utility class
 class PaddingLabel: UILabel {
     var insets = UIEdgeInsets(top: 3, left: 8, bottom: 3, right: 8)
@@ -576,79 +582,10 @@ class PaddingLabel: UILabel {
     }
 }
 
-class CatchInfoRowView: UIView {
-    // Thresholds for coloring, if you still want them:
-    private let missedThreshold = 0
-    private let yellowThreshold = 15
-    private let greenThreshold = 30
 
-    init(info: CatchInfo) {
-        super.init(frame: .zero)
-        setupUI(info: info)
-    }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func setupUI(info: CatchInfo) {
-            let personLabel = UILabel()
-            personLabel.text = "🧑"
-            personLabel.font = .systemFont(ofSize: 22)
 
-            let expectedArrival = UILabel()
-            expectedArrival.text = "Train: \(info.expectedArrival)"
-            expectedArrival.font = .systemFont(ofSize: 16)
-            expectedArrival.textColor = .darkGray
-
-            // 显示 timeLeftToCatch
-            let timeLeftLabel = UILabel()
-            let timeLeft = Int(round(info.timeLeftToCatch))
-            if timeLeft > 0 {
-                timeLeftLabel.text = "\(timeLeft) sec left"
-                timeLeftLabel.textColor = .systemGreen
-            } else {
-                timeLeftLabel.text = "Missed"
-                timeLeftLabel.textColor = .systemRed
-            }
-            timeLeftLabel.font = .systemFont(ofSize: 16)
-            timeLeftLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
-
-            let resultIcon = UILabel()
-            resultIcon.text = info.canCatch ? "✅" : "❌"
-            resultIcon.font = .systemFont(ofSize: 22)
-            resultIcon.textColor = info.canCatch ? .systemGreen : .systemRed
-            resultIcon.textAlignment = .center
-            resultIcon.widthAnchor.constraint(equalToConstant: 32).isActive = true
-
-            let hourglass = UILabel()
-            hourglass.text = "⏳"
-            hourglass.font = .systemFont(ofSize: 18)
-
-            let hStack = UIStackView(arrangedSubviews: [
-                personLabel,
-                expectedArrival,
-                timeLeftLabel,
-                hourglass,
-                resultIcon
-            ])
-            hStack.axis = .horizontal
-            hStack.spacing = 18
-            hStack.alignment = .center
-            hStack.distribution = .fill
-            hStack.isLayoutMarginsRelativeArrangement = true
-            hStack.layoutMargins = UIEdgeInsets(top: 8, left: 18, bottom: 8, right: 18)
-
-            addSubview(hStack)
-            hStack.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                hStack.topAnchor.constraint(equalTo: self.topAnchor),
-                hStack.bottomAnchor.constraint(equalTo: self.bottomAnchor),
-                hStack.leadingAnchor.constraint(equalTo: self.leadingAnchor),
-                hStack.trailingAnchor.constraint(equalTo: self.trailingAnchor)
-            ])
-            self.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.92)
-            self.layer.cornerRadius = 8
-    }
-}
 
 extension RouteSummaryViewController: JourneyProgressDelegate {
     func journeyProgressDidUpdate(

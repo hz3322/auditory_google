@@ -1,75 +1,48 @@
-
 import UIKit
 import GoogleMaps
 import GooglePlaces
 import CoreLocation
 
 class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate {
-    
-    
 
     // MARK: - Properties
-       private let locationManager = CLLocationManager()
-       private var mapView: GMSMapView!
-       private var currentLocation: CLLocationCoordinate2D?
-       private var imageCache = NSCache<NSString, UIImage>()
-       private var displayedPlaceNames = Set<String>()
-       var startLocation: CLLocationCoordinate2D!
-       var destinationLocation: CLLocationCoordinate2D!
+    private let locationManager = CLLocationManager()
+    private var mapView: GMSMapView!
+    private var currentLocation: CLLocationCoordinate2D?
+    private var imageCache = NSCache<NSString, UIImage>()
+    private var displayedPlaceNames = Set<String>()
+    private var startTextField: UITextField!
+    private var destinationTextField: UITextField!
+    private let frequentStack = UIStackView()
+    
 
     // MARK: - UI Components
+   
+    // MARK: - UI Components
+    private let scrollView = UIScrollView()
+    private let contentStack = UIStackView()
+    
+    // -- Custom sections
+    private lazy var greetingHeader = GreetingHeaderView(name: "Hanxue", time: "Good Morning")
+    private lazy var locationCard = LocationCardView(locationText: "Current Location: London")
     
     
-       private let mainScrollView: UIScrollView = {
-           let scrollView = UIScrollView()
-           scrollView.translatesAutoresizingMaskIntoConstraints = false
-           scrollView.alwaysBounceVertical = true
-           return scrollView
-       }()
-
-       private let contentView: UIView = {
-           let view = UIView()
-           view.translatesAutoresizingMaskIntoConstraints = false
-           return view
-       }()
-
-       private lazy var cardContainer: UIView = {
-           let view = UIView()
-           view.translatesAutoresizingMaskIntoConstraints = false
-           return view
-       }()
-
-       private lazy var stationScrollView: UIScrollView = {
-           let scrollView = UIScrollView()
-           scrollView.translatesAutoresizingMaskIntoConstraints = false
-           return scrollView
-       }()
-
-       private lazy var stationStackView: UIStackView = {
-           let stackView = UIStackView()
-           stackView.axis = .horizontal
-           stackView.spacing = 12
-           stackView.translatesAutoresizingMaskIntoConstraints = false
-           return stackView
-       }()
-
-       private let startTextField: UITextField = {
-           let tf = UITextField()
-           tf.placeholder = "Current Location"
-           tf.borderStyle = .roundedRect
-           tf.returnKeyType = .done
-           tf.translatesAutoresizingMaskIntoConstraints = false
-           return tf
-       }()
-
-       private let destinationTextField: UITextField = {
-           let tf = UITextField()
-           tf.placeholder = "Enter Destination"
-           tf.borderStyle = .roundedRect
-           tf.returnKeyType = .done
-           tf.translatesAutoresizingMaskIntoConstraints = false
-           return tf
-       }()
+    func makeRoundedTextField(placeholder: String) -> UITextField {
+        let tf = UITextField()
+        tf.placeholder = placeholder
+        tf.backgroundColor = .white
+        tf.layer.cornerRadius = 18
+        tf.layer.shadowColor = UIColor.black.cgColor
+        tf.layer.shadowOpacity = 0.04
+        tf.layer.shadowRadius = 6
+        tf.layer.shadowOffset = CGSize(width: 0, height: 2)
+        tf.font = UIFont.systemFont(ofSize: 17)
+        tf.borderStyle = .none
+        tf.setLeftPaddingPoints(16)
+        tf.translatesAutoresizingMaskIntoConstraints = false
+        tf.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        return tf
+    }
 
        private let startTripButton: UIButton = {
            let button = UIButton(type: .system)
@@ -86,109 +59,104 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .white
-        let logoTitleHeader = LogoTitleHeaderView(title: "Home")
-        navigationItem.titleView = logoTitleHeader
+        view.backgroundColor = UIColor(red: 245/255, green: 248/255, blue: 255/255, alpha: 1)
 
-        setupMap()
-        setupScrollViewLayout()
-        setupCardUI()
+        setupScrollView()
+        setupContent()
         setupLocationManager()
         setupKeyboardNotifications()
-
-        startTextField.delegate = self
-        destinationTextField.delegate = self
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.displayAttractions()
-        }
-        
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
-        view.addGestureRecognizer(tapGesture)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.displayAttractions() }
     }
     
     // MARK: - Setup Layout
-       private func setupScrollViewLayout() {
-           view.addSubview(mainScrollView)
-           mainScrollView.addSubview(contentView)
+    
+    private func setupScrollView() {
+           scrollView.translatesAutoresizingMaskIntoConstraints = false
+           contentStack.axis = .vertical
+           contentStack.spacing = 24
+           contentStack.translatesAutoresizingMaskIntoConstraints = false
+
+           view.addSubview(scrollView)
+           scrollView.addSubview(contentStack)
 
            NSLayoutConstraint.activate([
-               mainScrollView.topAnchor.constraint(equalTo: view.topAnchor),
-               mainScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-               mainScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-               mainScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-               contentView.topAnchor.constraint(equalTo: mainScrollView.topAnchor),
-               contentView.leadingAnchor.constraint(equalTo: mainScrollView.leadingAnchor),
-               contentView.trailingAnchor.constraint(equalTo: mainScrollView.trailingAnchor),
-               contentView.bottomAnchor.constraint(equalTo: mainScrollView.bottomAnchor),
-               contentView.widthAnchor.constraint(equalTo: mainScrollView.widthAnchor)
+               scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+               scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+               scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+               scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+               contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 16),
+               contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 18),
+               contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -18),
+               contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+               contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -36)
            ])
        }
 
-
-    private func setupMap() {
-            let camera = GMSCameraPosition.camera(withLatitude: 0, longitude: 0, zoom: 12)
-            mapView = GMSMapView()
-            mapView.frame = view.bounds
-            mapView.camera = camera
-            mapView.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(mapView)
-
-            NSLayoutConstraint.activate([
-                mapView.topAnchor.constraint(equalTo: contentView.topAnchor),
-                mapView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                mapView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-                mapView.heightAnchor.constraint(equalTo: contentView.heightAnchor, multiplier: 0.35)
-            ])
-        }
-
-        private func setupCardUI() {
-            contentView.addSubview(cardContainer)
-            cardContainer.addSubview(startTextField)
-            cardContainer.addSubview(destinationTextField)
-            cardContainer.addSubview(stationScrollView)
-            stationScrollView.addSubview(stationStackView)
-            contentView.addSubview(startTripButton)
-
-
-            NSLayoutConstraint.activate([
-                cardContainer.topAnchor.constraint(equalTo: mapView.bottomAnchor, constant: 12),
-                cardContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-                cardContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-
-                startTextField.topAnchor.constraint(equalTo: cardContainer.topAnchor, constant: 16),
-                startTextField.leadingAnchor.constraint(equalTo: cardContainer.leadingAnchor, constant: 16),
-                startTextField.trailingAnchor.constraint(equalTo: cardContainer.trailingAnchor, constant: -16),
-                startTextField.heightAnchor.constraint(equalToConstant: 44),
-
-                destinationTextField.topAnchor.constraint(equalTo: startTextField.bottomAnchor, constant: 12),
-                destinationTextField.leadingAnchor.constraint(equalTo: cardContainer.leadingAnchor, constant: 16),
-                destinationTextField.trailingAnchor.constraint(equalTo: cardContainer.trailingAnchor, constant: -16),
-                destinationTextField.heightAnchor.constraint(equalToConstant: 44),
-
-                stationScrollView.topAnchor.constraint(equalTo: destinationTextField.bottomAnchor, constant: 12),
-                stationScrollView.leadingAnchor.constraint(equalTo: cardContainer.leadingAnchor),
-                stationScrollView.trailingAnchor.constraint(equalTo: cardContainer.trailingAnchor),
-                stationScrollView.heightAnchor.constraint(equalToConstant: 200),
-                stationScrollView.bottomAnchor.constraint(equalTo: cardContainer.bottomAnchor, constant: -16),
-
-                stationStackView.topAnchor.constraint(equalTo: stationScrollView.topAnchor),
-                stationStackView.leadingAnchor.constraint(equalTo: stationScrollView.leadingAnchor, constant: 16),
-                stationStackView.trailingAnchor.constraint(equalTo: stationScrollView.trailingAnchor),
-                stationStackView.bottomAnchor.constraint(equalTo: stationScrollView.bottomAnchor),
-                stationStackView.heightAnchor.constraint(equalTo: stationScrollView.heightAnchor),
-
-                startTripButton.topAnchor.constraint(equalTo: cardContainer.bottomAnchor, constant: 24),
-                startTripButton.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-                startTripButton.widthAnchor.constraint(equalToConstant: 200),
-                startTripButton.heightAnchor.constraint(equalToConstant: 50),
-                startTripButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -30)
-            ])
-
-            startTripButton.addTarget(self, action: #selector(startTripButtonTapped), for: .touchUpInside)
-            updateStartTripButtonState()
-        }
+       private func setupContent() {
+           // 1. Greeting
+           contentStack.addArrangedSubview(greetingHeader)
+           // 2. Location Card
+           contentStack.addArrangedSubview(locationCard)
+           // 3. Search Bars
+           startTextField = makeRoundedTextField(placeholder: "From (Current Location)")
+           destinationTextField = makeRoundedTextField(placeholder: "To (Enter Destination)")
+           let searchStack = UIStackView(arrangedSubviews: [startTextField, destinationTextField])
+           searchStack.axis = .vertical
+           searchStack.spacing = 10
+           contentStack.addArrangedSubview(searchStack)
+           // 4. MapView
+           mapView = GMSMapView()
+           mapView.layer.cornerRadius = 18
+           mapView.translatesAutoresizingMaskIntoConstraints = false
+           mapView.heightAnchor.constraint(equalToConstant: 220).isActive = true
+           contentStack.addArrangedSubview(mapView)
+           // 5. Frequent Places (Fake data example)
+           let frequentLabel = UILabel()
+           frequentLabel.text = "Frequent Places"
+           frequentLabel.font = .boldSystemFont(ofSize: 19)
+           frequentLabel.textColor = .systemBlue
+           contentStack.addArrangedSubview(frequentLabel)
+           // 6. Frequent places cards
+           let frequentStack = makeHorizontalCardStack(cardTitles: ["Imperial College", "Oxford Circus", "Baker Street"])
+           contentStack.addArrangedSubview(frequentStack)
+           // 7. Near of You
+           let nearLabel = UILabel()
+           nearLabel.text = "Near Of You"
+           nearLabel.font = .boldSystemFont(ofSize: 19)
+           nearLabel.textColor = .systemBlue
+           contentStack.addArrangedSubview(nearLabel)
+           // 8. Station cards
+           let nearStack = makeHorizontalCardStack(cardTitles: ["Hyde Park", "Piccadilly Circus", "London Eye"])
+           contentStack.addArrangedSubview(nearStack)
+       }
+       
+       private func makeHorizontalCardStack(cardTitles: [String]) -> UIStackView {
+           let stack = UIStackView()
+           stack.axis = .horizontal
+           stack.spacing = 16
+           for title in cardTitles {
+               let card = UIView()
+               card.backgroundColor = .white
+               card.layer.cornerRadius = 12
+               card.layer.shadowColor = UIColor.black.cgColor
+               card.layer.shadowOpacity = 0.04
+               card.layer.shadowRadius = 6
+               card.layer.shadowOffset = CGSize(width: 0, height: 2)
+               let label = UILabel()
+               label.text = title
+               label.font = .systemFont(ofSize: 16, weight: .medium)
+               label.textColor = .black
+               label.translatesAutoresizingMaskIntoConstraints = false
+               card.addSubview(label)
+               label.centerXAnchor.constraint(equalTo: card.centerXAnchor).isActive = true
+               label.centerYAnchor.constraint(equalTo: card.centerYAnchor).isActive = true
+               card.translatesAutoresizingMaskIntoConstraints = false
+               card.widthAnchor.constraint(equalToConstant: 120).isActive = true
+               card.heightAnchor.constraint(equalToConstant: 60).isActive = true
+               stack.addArrangedSubview(card)
+           }
+           return stack
+       }
 
     
     private func setupLocationManager() {
@@ -214,10 +182,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
 
     // MARK: - Attractions Loading
-
     private func displayAttractions() {
         guard let coord = currentLocation else { return }
-        stationStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        frequentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         displayedPlaceNames.removeAll()
 
         let desiredCount = Int.random(in: 3...5)
@@ -239,7 +206,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                     if !self.displayedPlaceNames.contains(name) {
                         self.displayedPlaceNames.insert(name)
                         let card = self.makeStationCard(name: name, image: image, coord: placeCoord)
-                        self.stationStackView.addArrangedSubview(card)
+                        self.frequentStack.addArrangedSubview(card)
                         fetchedCount += 1
                     }
                     if fetchedCount < desiredCount && candidatesProcessed < maxTries {
@@ -509,5 +476,13 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     
     @objc private func dismissKeyboard() {
         view.endEditing(true)
+    }
+}
+
+extension UITextField {
+    func setLeftPaddingPoints(_ amount:CGFloat){
+        let paddingView = UIView(frame: CGRect(x: 0, y: 0, width: amount, height: self.frame.height))
+        self.leftView = paddingView
+        self.leftViewMode = .always
     }
 }
