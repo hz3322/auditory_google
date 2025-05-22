@@ -23,6 +23,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private var locationCard: LocationCardView!
     private let frequentStack = UIStackView()
     private var mapView: GMSMapView!
+    private var nearAttractionsScrollView: UIScrollView!
+    private var nearAttractionsStack: UIStackView!
     
     // -- Custom sections
   
@@ -54,7 +56,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     func makeRoundedTextField(placeholder: String) -> UITextField {
         let tf = UITextField()
         tf.placeholder = placeholder
-        tf.backgroundColor = .white
+        tf.backgroundColor = .secondarySystemBackground
         tf.layer.cornerRadius = 18
         tf.layer.shadowColor = UIColor.black.cgColor
         tf.layer.shadowOpacity = 0.04
@@ -69,7 +71,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
     
     private func makeGreetingWithAreaBlock(greeting: String, username: String, area: String) -> UIStackView {
-        
+     
         // Greeting label
         let greetingLabel = UILabel()
         greetingLabel.numberOfLines = 2
@@ -84,7 +86,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         areaBlock.layer.masksToBounds = true
 
         let areaLabel = UILabel()
-        areaLabel.numberOfLines = 0 
+        areaLabel.numberOfLines = 0
         areaLabel.lineBreakMode = .byWordWrapping
         areaLabel.textAlignment = .center
         
@@ -169,6 +171,29 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
        }
 
        private func setupContent() {
+           // LOGO
+              let logo = UIImageView(image: UIImage(named: "ontimego_logo"))
+              logo.contentMode = .scaleAspectFit
+              logo.translatesAutoresizingMaskIntoConstraints = false
+              logo.widthAnchor.constraint(equalToConstant: 120).isActive = true
+              logo.heightAnchor.constraint(equalToConstant: 120).isActive = true
+           
+              let logoContainer = UIView()
+              logoContainer.translatesAutoresizingMaskIntoConstraints = false
+              logoContainer.addSubview(logo)
+              NSLayoutConstraint.activate([
+                  logo.centerXAnchor.constraint(equalTo: logoContainer.centerXAnchor),
+                  logo.topAnchor.constraint(equalTo: logoContainer.topAnchor),
+                  logo.bottomAnchor.constraint(equalTo: logoContainer.bottomAnchor)
+              ])
+
+              logoContainer.heightAnchor.constraint(equalToConstant: 140).isActive = true
+              contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 0).isActive = true
+              contentStack.addArrangedSubview(logoContainer)
+              contentStack.setCustomSpacing(8, after: logoContainer)
+
+
+           
            // 1. Greeting and area block
            // TODO : 需要从data base 调用
            let profile = UserProfile(name: "Hanxue")
@@ -184,10 +209,17 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
            // 2. Search Bars
            startTextField = makeRoundedTextField(placeholder: "From (Current Location)")
            destinationTextField = makeRoundedTextField(placeholder: "To (Enter Destination)")
+           startTextField.delegate = self
+           destinationTextField.delegate = self
            let searchStack = UIStackView(arrangedSubviews: [startTextField, destinationTextField])
            searchStack.axis = .vertical
            searchStack.spacing = 10
            contentStack.addArrangedSubview(searchStack)
+           
+           // startTripButton
+           contentStack.addArrangedSubview(startTripButton)
+           startTripButton.addTarget(self, action: #selector(startTripButtonTapped), for: .touchUpInside)
+           
            // 3. MapView
            let camera = GMSCameraPosition.camera(withLatitude: 0, longitude: 0, zoom: 12)
            mapView = GMSMapView()
@@ -196,12 +228,14 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
            mapView.translatesAutoresizingMaskIntoConstraints = false
            mapView.heightAnchor.constraint(equalToConstant: 220).isActive = true
            contentStack.addArrangedSubview(mapView)
+           
            // 4. Frequent Places (Fake data example)
            let frequentLabel = UILabel()
            frequentLabel.text = "Frequent Places"
            frequentLabel.font = .boldSystemFont(ofSize: 19)
            frequentLabel.textColor = .systemBlue
            contentStack.addArrangedSubview(frequentLabel)
+           
            // 5. Frequent places cards
            let frequentStack = makeHorizontalCardStack(cardTitles: ["Imperial College", "Oxford Circus", "Baker Street"])
            frequentStack.axis = .horizontal
@@ -213,9 +247,36 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
            nearLabel.font = .boldSystemFont(ofSize: 19)
            nearLabel.textColor = .systemBlue
            contentStack.addArrangedSubview(nearLabel)
-           // 8. Station cards
-           let nearStack = makeHorizontalCardStack(cardTitles: ["Hyde Park", "Piccadilly Circus", "London Eye"])
-           contentStack.addArrangedSubview(nearStack)
+
+           // 横向 UIScrollView + 横向 UIStackView
+           let nearScrollView = UIScrollView()
+           nearScrollView.showsHorizontalScrollIndicator = false
+           nearScrollView.translatesAutoresizingMaskIntoConstraints = false
+           nearScrollView.alwaysBounceHorizontal = true
+
+           let nearStack = UIStackView()
+           nearStack.axis = .horizontal
+           nearStack.spacing = 16
+           nearStack.translatesAutoresizingMaskIntoConstraints = false
+
+           nearScrollView.addSubview(nearStack)
+           contentStack.addArrangedSubview(nearScrollView)
+
+           // 约束 stackView 塞进 scrollView
+           NSLayoutConstraint.activate([
+               nearStack.topAnchor.constraint(equalTo: nearScrollView.topAnchor),
+               nearStack.bottomAnchor.constraint(equalTo: nearScrollView.bottomAnchor),
+               nearStack.leadingAnchor.constraint(equalTo: nearScrollView.leadingAnchor, constant: 8),
+               nearStack.trailingAnchor.constraint(equalTo: nearScrollView.trailingAnchor, constant: -8),
+               nearStack.heightAnchor.constraint(equalToConstant: 160) // 和卡片高度一样
+           ])
+
+           // 给 nearScrollView 固定高度（不要漏）
+           nearScrollView.heightAnchor.constraint(equalToConstant: 160).isActive = true
+
+           self.nearAttractionsStack = nearStack
+           self.nearAttractionsScrollView = nearScrollView
+   
        }
        
        private func makeHorizontalCardStack(cardTitles: [String]) -> UIStackView {
@@ -290,7 +351,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     // MARK: - Attractions Loading
     private func displayAttractions() {
         guard let coord = currentLocation else { return }
-        frequentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         displayedPlaceNames.removeAll()
 
         let desiredCount = Int.random(in: 3...5)
@@ -312,7 +373,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                     if !self.displayedPlaceNames.contains(name) {
                         self.displayedPlaceNames.insert(name)
                         let card = self.makeStationCard(name: name, image: image, coord: placeCoord)
-                        self.frequentStack.addArrangedSubview(card)
+                        self.nearAttractionsStack.addArrangedSubview(card)
+                        
                         fetchedCount += 1
                     }
                     if fetchedCount < desiredCount && candidatesProcessed < maxTries {
