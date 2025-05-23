@@ -43,6 +43,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var userStationLocation: CLLocation? // Tube station entrance
     private var totalWalkDistance: Double = 1 // Will be set when data is loaded
     
+    private let sloganLabel: UILabel = {
+        let label = UILabel()
+        label.text = "Track your journey 👀"
+        label.font = .systemFont(ofSize: 15, weight: .medium)
+        label.textColor = UIColor.systemGray
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
     private var refreshTimer: Timer?
     
     
@@ -61,15 +71,28 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     
     // MARK: - UI Setup
     private func setupProgressBar() {
-        // Card style for the progress bar
-        progressBarCard.backgroundColor = .white
-        progressBarCard.layer.cornerRadius = 18
-        progressBarCard.layer.shadowColor = UIColor.black.cgColor
-        progressBarCard.layer.shadowOpacity = 0.05
-        progressBarCard.layer.shadowRadius = 10
-        progressBarCard.layer.shadowOffset = CGSize(width: 0, height: 4)
-        progressBarCard.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(progressBarCard)
+        // 0. Slogan label above progress bar
+        view.addSubview(sloganLabel)
+            view.addSubview(progressBarCard)
+
+            NSLayoutConstraint.activate([
+                sloganLabel.bottomAnchor.constraint(equalTo: progressBarCard.topAnchor, constant: -10),
+                sloganLabel.centerXAnchor.constraint(equalTo: progressBarCard.centerXAnchor),
+
+                progressBarCard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+                progressBarCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+                progressBarCard.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+                progressBarCard.heightAnchor.constraint(equalToConstant: 72)
+            ])
+
+            // Card style for the progress bar
+            progressBarCard.backgroundColor = .white
+            progressBarCard.layer.cornerRadius = 18
+            progressBarCard.layer.shadowColor = UIColor.black.cgColor
+            progressBarCard.layer.shadowOpacity = 0.05
+            progressBarCard.layer.shadowRadius = 10
+            progressBarCard.layer.shadowOffset = CGSize(width: 0, height: 4)
+            progressBarCard.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             progressBarCard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
             progressBarCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
@@ -233,18 +256,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 guard let self = self else { return }
                 DispatchQueue.main.async {
                     if catchInfos.isEmpty {
-                        let emptyLabel = UILabel()
-                        emptyLabel.text = "No predictions available"
-                        emptyLabel.textColor = .gray
-                        catchSectionView.addArrangedSubview(emptyLabel)
-                    } else {
-                        for catchInfo in catchInfos {
+                        self.showNoTrainAlertAndPop()
+                        return
+                    }
+                    for catchInfo in catchInfos {
                             let row = CatchInfoRowView(info: catchInfo)
                             catchSectionView.addArrangedSubview(row)
-                        }
                     }
                 }
             }
+
             
             // Transit Card
             let card = makeTransitCard(info: info, isTransfer: index > 0)
@@ -263,6 +284,20 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         }
     
     }
+    
+    func showNoTrainAlertAndPop() {
+        let alert = UIAlertController(
+            title: "No Trains 🚫",
+            message: "No more trains running tonight.",
+            preferredStyle: .alert
+        )
+        self.present(alert, animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            alert.dismiss(animated: true)
+            self.navigationController?.popToRootViewController(animated: true)
+        }
+    }
+    
     
     /// Initializes and starts location tracking
     private func startTrackingLocation() {
