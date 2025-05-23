@@ -60,6 +60,17 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 245/255, green: 248/255, blue: 255/255, alpha: 1)
+        
+        self.title = "Journey Summary"
+        navigationController?.navigationBar.tintColor = AppColors.accentBlue
+        
+        // Add back button
+        let backButton = UIBarButtonItem(image: UIImage(systemName: "chevron.left"),
+                                               style: .plain,
+                                               target: self,
+                                               action: #selector(backButtonTapped))
+        navigationItem.leftBarButtonItem = backButton
+        
         setupProgressBar()
         setupLayout()
         populateSummary()
@@ -69,30 +80,40 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         locationManager.startUpdatingLocation()
     }
     
+    @objc private func backButtonTapped() {
+        navigationController?.popViewController(animated: true)
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // --- Make sure navigation bar is shown ---
+        navigationController?.setNavigationBarHidden(false, animated: animated)
+    }
+    
     // MARK: - UI Setup
     private func setupProgressBar() {
         // 0. Slogan label above progress bar
         view.addSubview(sloganLabel)
-            view.addSubview(progressBarCard)
+        view.addSubview(progressBarCard)
 
-            NSLayoutConstraint.activate([
-                sloganLabel.bottomAnchor.constraint(equalTo: progressBarCard.topAnchor, constant: -10),
-                sloganLabel.centerXAnchor.constraint(equalTo: progressBarCard.centerXAnchor),
+        NSLayoutConstraint.activate([
+            sloganLabel.bottomAnchor.constraint(equalTo: progressBarCard.topAnchor, constant: -10),
+            sloganLabel.centerXAnchor.constraint(equalTo: progressBarCard.centerXAnchor),
 
-                progressBarCard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
-                progressBarCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-                progressBarCard.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-                progressBarCard.heightAnchor.constraint(equalToConstant: 72)
-            ])
+            progressBarCard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+            progressBarCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            progressBarCard.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            progressBarCard.heightAnchor.constraint(equalToConstant: 72)
+        ])
 
-            // Card style for the progress bar
-            progressBarCard.backgroundColor = .white
-            progressBarCard.layer.cornerRadius = 18
-            progressBarCard.layer.shadowColor = UIColor.black.cgColor
-            progressBarCard.layer.shadowOpacity = 0.05
-            progressBarCard.layer.shadowRadius = 10
-            progressBarCard.layer.shadowOffset = CGSize(width: 0, height: 4)
-            progressBarCard.translatesAutoresizingMaskIntoConstraints = false
+        // Card style for the progress bar
+        progressBarCard.backgroundColor = .white
+        progressBarCard.layer.cornerRadius = 18
+        progressBarCard.layer.shadowColor = UIColor.black.cgColor
+        progressBarCard.layer.shadowOpacity = 0.05
+        progressBarCard.layer.shadowRadius = 10
+        progressBarCard.layer.shadowOffset = CGSize(width: 0, height: 4)
+        progressBarCard.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             progressBarCard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
             progressBarCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
@@ -566,6 +587,8 @@ extension UIColor {
         let brightness = ((components[0] * 299) + (components[1] * 587) + (components[2] * 114)) / 1000
         return brightness > 0.5
     }
+    
+    
 }
 
 

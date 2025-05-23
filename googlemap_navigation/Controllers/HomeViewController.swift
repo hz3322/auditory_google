@@ -111,7 +111,6 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         // *** UPDATED FUNCTION CALL ***
         let greetingLogoAndAreaStack = makeGreetingWithLogoAndAreaBlock(greeting: greeting, username: username, area: "Locating...")
         contentStack.addArrangedSubview(greetingLogoAndAreaStack)
-        // self.greetingAreaStack = greetingLogoAndAreaStack // Not needed if it's not a class property for external modification
         contentStack.setCustomSpacing(30, after: greetingLogoAndAreaStack)
 
         // 2. Search Card
