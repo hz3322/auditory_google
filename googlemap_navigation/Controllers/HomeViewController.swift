@@ -18,6 +18,8 @@ struct AppColors {
 }
 
 
+
+
 class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate {
 
     // MARK: - Properties
@@ -29,8 +31,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private var destinationTextField: UITextField!
     private var profile: UserProfile!
     private var areaLabel: UILabel!
-    // Removed greetingAreaStack as a class property, it's now constructed and returned by makeGreetingWithLogoAndAreaBlock
-    // private var greetingAreaStack: UIStackView?
+  
 
 
     // MARK: - UI Components
@@ -485,7 +486,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         coord: CLLocationCoordinate2D,
         completion: @escaping (UIImage?, String?, CLLocationCoordinate2D?) -> Void
     ) {
-        let urlStr = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=\(coord.latitude),\(coord.longitude)&radius=3000&type=tourist_attraction&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
+        let apiKey = APIKeys.googleMaps
+        
+        let urlStr = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=\(coord.latitude),\(coord.longitude)&radius=3000&type=tourist_attraction&key=\(apiKey)"
         guard let url = URL(string: urlStr) else {
             completion(nil, nil,nil); return
         }
@@ -522,8 +525,10 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             if let cached = self.imageCache.object(forKey: cacheKey) {
                 completion(cached, name, attractionCoord); return
             }
+            
+            let apiKey = APIKeys.googleMaps
 
-            let photoURLStr = "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=\(reference)&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSEY"
+            let photoURLStr = "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=\(reference)&key=\(apiKey)"
             guard let photoURL = URL(string: photoURLStr) else {
                 completion(nil, name,attractionCoord); return
             }

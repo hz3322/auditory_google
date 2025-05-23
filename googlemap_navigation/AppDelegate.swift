@@ -3,13 +3,18 @@ import UIKit
 import GoogleMaps
 import GooglePlaces
 
+struct APIKeys {
+    static let googleMaps = "AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
+
+    // static let tflAppKey = "YOUR_TFL_APP_KEY"
+}
+
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
-    let APIkey = "AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
-
+  
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        GMSServices.provideAPIKey(APIkey)
-        GMSPlacesClient.provideAPIKey(APIkey)
+        GMSServices.provideAPIKey(APIKeys.googleMaps)
+        GMSPlacesClient.provideAPIKey(APIKeys.googleMaps)
         return true
     }
 
