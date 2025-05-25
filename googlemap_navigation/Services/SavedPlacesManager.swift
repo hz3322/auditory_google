@@ -1,7 +1,7 @@
 import Foundation
 import CoreLocation
 import FirebaseFirestore
-import FirebaseAuth         // 如果您计划使用 Firebase Authentication 来区分用户
+import FirebaseAuth
 
 struct SavedPlace: Codable, Identifiable, Hashable {
     var id = UUID()
@@ -43,7 +43,7 @@ class SavedPlacesManager {
 
     //  Firebase Authentication:
     private var currentUserID: String? {
-        if let existingID = UserDefaults.standard.string(forKey: "deviceAnonymousUserID_ Firestore") { // 使用一个清晰的键名
+        if let existingID = UserDefaults.standard.string(forKey: "deviceAnonymousUserID_Firestore") { 
                 return existingID
             } else {
                 let newID = UUID().uuidString

@@ -101,22 +101,14 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         // 2. Setup non-data-dependent services
         setupLocationManager()
         setupKeyboardNotifications()
+    
         
-
-        
-        navigationController?.isNavigationBarHidden = true // Hide nav bar for custom UI
-        
-//        // 3. Fetch nearby attractions after a short delay (allowing location services to start)
-//        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { // Increased delay slightly
-//            if self.currentLocation != nil { // Only if location is available
-//                self.displayAttractions()
-//            }
-//        }
+        navigationController?.isNavigationBarHidden = true
     }
     
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        navigationController?.isNavigationBarHidden = true // Re-hide if shown by another VC
+        navigationController?.isNavigationBarHidden = true
         // Refresh frequent places UI in case it was modified elsewhere (e.g., a settings screen)
         // or if data loading in viewDidLoad hadn't completed before first willAppear.
         if frequentPlacesScrollView != nil { // Check if UI is already set up
@@ -305,51 +297,6 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         contentStack.addArrangedSubview(mapCardView)
         contentStack.setCustomSpacing(30, after: mapCardView)
     }
-
-//    private func setupMapViewCard() {
-//        guard let location = self.currentLocation else {
-//               print("❗️currentLocation is nil, skipping setupMapViewCard")
-//               // 可以选择return，也可以显示一个“定位未获取到”的UI
-//               return
-//           }
-//        let mapView = GMSMapView(frame: .zero)
-//        mapView.layer.cornerRadius = 12
-//        mapView.clipsToBounds = true
-//        mapView.isMyLocationEnabled = true
-//        mapView.translatesAutoresizingMaskIntoConstraints = false
-//        self.mapView = mapView
-//        
-//        
-//        let mapCardView = createCardView()
-//        contentStack.addArrangedSubview(mapCardView)
-//        
-//        let camera = GMSCameraPosition.camera(withLatitude: currentLocation?.latitude ?? 51.5074,
-//                                                     longitude: currentLocation?.longitude ?? -0.1278,
-//                                                     zoom: 12) // London default if no location yet
-//        let options = GMSMapViewOptions()
-//        options.camera = camera
-//        options.frame = .zero
-//        
-//        mapView.layer.cornerRadius = 12
-//        mapView.clipsToBounds = true
-//        mapView.translatesAutoresizingMaskIntoConstraints = false
-//        mapView.isMyLocationEnabled = true // Show Google's blue dot for current location
-//
-//        guard let mapView = self.mapView else {
-//            print("mapView is nil")
-//            return
-//        }
-//        mapView.addSubview(mapView)
-//        
-//        NSLayoutConstraint.activate([
-//            mapView.topAnchor.constraint(equalTo: mapCardView.topAnchor),
-//            mapView.leadingAnchor.constraint(equalTo: mapCardView.leadingAnchor),
-//            mapView.trailingAnchor.constraint(equalTo: mapCardView.trailingAnchor),
-//            mapView.bottomAnchor.constraint(equalTo: mapCardView.bottomAnchor),
-//            mapView.heightAnchor.constraint(equalToConstant: 200)
-//        ])
-//        contentStack.setCustomSpacing(30, after: mapCardView)
-//    }
 
     private func setupFrequentPlacesSection() {
         let frequentLabel = makeSectionHeaderLabel(text: "Frequent Places")
@@ -752,7 +699,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private func setupLocationManager() {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        locationManager.distanceFilter = 50 // 单位是米，10米刷新一次
+        locationManager.distanceFilter = 50 
         locationManager.requestWhenInUseAuthorization()
     }
 

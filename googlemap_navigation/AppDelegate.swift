@@ -14,6 +14,12 @@ struct APIKeys {
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        
+        #if DEBUG
+        let providerFactory = AppCheckDebugProviderFactory()
+        AppCheck.setAppCheckProviderFactory(providerFactory)
+        print("ℹ️ Firebase App Check: Using DebugProviderFactory for DEBUG builds.")
+        #endif
             // Configure Firebase
         FirebaseApp.configure()
             
