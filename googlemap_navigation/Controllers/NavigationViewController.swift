@@ -1,14 +1,3 @@
-//
-//  NavigationViewController.swift
-//  googlemap_navigation
-//
-//  Created by 赵韩雪 on 15/05/2025.
-//
-
-
-// NavigationViewController.swift
-// Connects NavigationManager with UI and updates auditory + visual feedback
-
 import UIKit
 import CoreLocation
 import GoogleMaps

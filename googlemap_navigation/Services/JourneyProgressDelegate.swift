@@ -85,7 +85,7 @@ class JourneyProgressService {
             // Just keep showing current progress (or 0)
         } else if phase == .stationToPlatform {
             let phaseStart = walkToStationSec
-            let phaseEnd = phaseStart + stationToPlatformSec
+//            let phaseEnd = phaseStart + stationToPlatformSec
             let progressInPhase = min(1.0, max(0, (elapsed - phaseStart) / stationToPlatformSec))
             phaseProgress = progressInPhase
             progress = min(1.0, max(0, (elapsed / totalTime)))

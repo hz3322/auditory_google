@@ -2,6 +2,8 @@
 import UIKit
 import GoogleMaps
 import GooglePlaces
+import FirebaseCore
+import FirebaseAppCheck
 
 struct APIKeys {
     static let googleMaps = "AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
@@ -11,12 +13,15 @@ struct APIKeys {
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
-  
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+            // Configure Firebase
+        FirebaseApp.configure()
+            
         GMSServices.provideAPIKey(APIKeys.googleMaps)
         GMSPlacesClient.provideAPIKey(APIKeys.googleMaps)
         return true
     }
+    
 
     // MARK: UISceneSession Lifecycle
 

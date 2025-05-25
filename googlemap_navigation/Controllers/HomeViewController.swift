@@ -2,6 +2,7 @@ import UIKit
 import GoogleMaps
 import GooglePlaces
 import CoreLocation
+import FirebaseFirestore
 
 // Define some modern colors (you can customize these further)
 struct AppColors {
@@ -17,32 +18,46 @@ struct AppColors {
     static let areaBlockText = UIColor(red: 42/255, green: 95/255, blue: 176/255, alpha: 1)
 }
 
+// Assume AppColors, UserProfile, SavedPlace, SavedPlacesManager, APIKeys are globally accessible
+// or defined in their respective files and imported.
+
 class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate {
 
     // MARK: - Properties
     private let locationManager = CLLocationManager()
     private var currentLocation: CLLocationCoordinate2D?
-    private var imageCache = NSCache<NSString, UIImage>()
-    private var displayedPlaceNames = Set<String>() // For nearby attractions
+    private var imageCache = NSCache<NSString, UIImage>() // Cache for nearby attraction images
+    private var displayedPlaceNames = Set<String>()     // To avoid duplicate nearby attractions
+
     private var startTextField: UITextField!
     private var destinationTextField: UITextField!
-    private var profile: UserProfile!
-    private var areaLabel: UILabel!
+    private var profile: UserProfile! // User profile data
+    private var areaLabel: UILabel!   // Displays current geographical area
 
     // --- Frequent Places Properties ---
     private var frequentPlaces: [SavedPlace] = []
     private var frequentPlacesScrollView: UIScrollView!
-    private var frequentPlacesStack: UIStackView!
-    private var addFrequentPlaceButton: UIButton!
-    private var currentlySettingPlaceName: String? // Stores "Home", "Work", or nil for new custom place
+    private var frequentPlacesStack: UIStackView! // Horizontal stack for frequent place cards
+    private var addFrequentPlaceButton: UIButton!   // The "+" button itself
+    
+    private var isUILayoutComplete: Bool = false
+
+    // To keep track of which frequent place (especially "Home" or "Work" placeholders)
+    // is being set or edited via the GMSAutocompleteViewController.
+    // This stores the name of the placeholder ("Home" or "Work") if one of those is tapped.
+    // It's nil if the user taps the general "+" button to add a new custom place.
+    private var currentlySettingPlaceName: String? // Stores "Home", "Work" if a placeholder is tapped, or nil for new custom place.
+    private var currentlyEditingFrequentPlace: SavedPlace?
+
 
     // MARK: - UI Components
     private let scrollView = UIScrollView()
-    private let contentStack = UIStackView()
+    private let contentStack = UIStackView() // Main vertical stack for all content
     private var mapView: GMSMapView!
     private var nearAttractionsScrollView: UIScrollView!
-    private var nearAttractionsStack: UIStackView!
+    private var nearAttractionsStack: UIStackView! // Horizontal stack for nearby attraction cards
     
+    // Lazy var for the "Start the Trip" button to allow adding target to self
     private lazy var startTripButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle("Start the Trip", for: .normal)
@@ -57,66 +72,140 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         button.translatesAutoresizingMaskIntoConstraints = false
         button.heightAnchor.constraint(equalToConstant: 50).isActive = true
         button.addTarget(self, action: #selector(startTripButtonTapped), for: .touchUpInside)
+        button.isEnabled = false // Initially disabled until start/destination are set
+        button.alpha = 0.5      // Visual cue for disabled state
         return button
     }()
 
     // MARK: - Autocomplete Tags Enum
+    // Tags to differentiate the purpose of GMSAutocompleteViewController presentation
     private enum GMSAutocompleteTag: Int {
-        case startField = 1
-        case destinationField = 2
-        case setHome = 100
-        case setWork = 101
-        case addFrequent = 102 // For adding a new custom frequent place
+        case startField = 1         // For the "From" text field
+        case destinationField = 2   // For the "To" text field
+        case setHome = 100          // When tapping "Tap to set Home" card
+        case setWork = 101          // When tapping "Tap to set Work" card
+        case addFrequent = 102      // When tapping the "+" button to add a new custom frequent place
     }
 
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = AppColors.background
-        profile = UserProfile(name: "Hanxue") // Make sure UserProfile is correctly initialized
+        profile = UserProfile(name: "Hanxue") // Example initialization
 
-        loadFrequentPlacesData()
+
+        // 1. Load initial data (frequent places) - this is now asynchronous
+        // The UI setup will be called in the completion of data loading.
+        loadFrequentPlacesDataAndSetupInitialUI()
         
-        setupScrollView()
-        setupContentStack()
-        setupGreetingAndLogo()
-        setupSearchCard()
-        setupStartTripButton()
-        setupMapViewCard()
-        setupFrequentPlacesSection()
-        setupNearAttractionsSection()
-        
+        // 2. Setup non-data-dependent services
         setupLocationManager()
         setupKeyboardNotifications()
         
-        navigationController?.isNavigationBarHidden = true
-        
-        refreshFrequentPlacesUI() // Initial population
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            if self.currentLocation != nil { // Only display attractions if location is known
-                self.displayAttractions()
-            }
-        }
+        
+        navigationController?.isNavigationBarHidden = true // Hide nav bar for custom UI
+        
+//        // 3. Fetch nearby attractions after a short delay (allowing location services to start)
+//        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { // Increased delay slightly
+//            if self.currentLocation != nil { // Only if location is available
+//                self.displayAttractions()
+//            }
+//        }
     }
     
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        navigationController?.isNavigationBarHidden = true
-        refreshFrequentPlacesUI()
+        navigationController?.isNavigationBarHidden = true // Re-hide if shown by another VC
+        // Refresh frequent places UI in case it was modified elsewhere (e.g., a settings screen)
+        // or if data loading in viewDidLoad hadn't completed before first willAppear.
+        if frequentPlacesScrollView != nil { // Check if UI is already set up
+             refreshFrequentPlacesUI()
+        }
     }
 
-    // MARK: - Data Handling
-    private func loadFrequentPlacesData() {
-        frequentPlaces = SavedPlacesManager.shared.loadPlaces()
-    }
+    // MARK: - Data Handling for Frequent Places
+    private func loadFrequentPlacesDataAndSetupInitialUI() {
+        SavedPlacesManager.shared.loadPlaces { [weak self] result in
+            DispatchQueue.main.async { // Ensure all subsequent calls are on the main thread
+                guard let self = self else { return }
+                switch result {
+                case .success(let places):
+                    self.frequentPlaces = places
+                    print("✅ Frequent places loaded from Firestore: \(places.count) items")
+                case .failure(let error):
+                    print("🛑 Error loading frequent places from Firestore: \(error.localizedDescription)")
+                    // Fallback to default placeholders in memory if Firestore load fails
+                    self.frequentPlaces = [
+                        SavedPlace(placeholderName: "Home", isSystemDefault: true),
+                        SavedPlace(placeholderName: "Work", isSystemDefault: true)
+                    ]
+                }
+                
+                // Setup UI components that depend on this data or general layout
+                // This check prevents re-running setup if called multiple times (e.g. from viewWillAppear too early)
+                if self.scrollView.superview == nil {
+                    self.setupScrollView()
+                    self.setupContentStack()
+                    self.setupGreetingAndLogo()
+                    self.setupMapViewCard()
+                    self.setupSearchCard()
+                    self.setupStartTripButton()
+ 
+                    self.setupFrequentPlacesSection() // Sets up the scroll view and stack structure
+                    self.setupNearAttractionsSection()   // Sets up the scroll view and stack structure
+                }
+                self.populateFrequentPlacesCards() // Populate the cards with loaded/default data
+                
+                self.isUILayoutComplete = true
+                
+                if self.locationManager.authorizationStatus == .authorizedWhenInUse || self.locationManager.authorizationStatus == .authorizedAlways {
+                               print("✅ UI setup complete. Starting location updates now.")
+                               self.locationManager.startUpdatingLocation()
+                } else if self.locationManager.authorizationStatus == .notDetermined {
+                               print("ℹ️ Location permission not determined. Waiting for user response.")
+                               // requestWhenInUseAuthorization 应该在 setupLocationManager 中已经被调用
+                }
+    
+               // Ensure location is available before trying to display location-based attractions
+               if self.currentLocation != nil {
+                   self.displayAttractions()
+               } else {
+                   // If location is not yet available, displayAttractions might be called
+                   // later by the locationManager's didUpdateLocations delegate method.
+                   // Or, might display a "waiting for location" message in the attractions section.
+                   print("ℹ️ Location not yet available to display attractions after initial UI setup.")
+               }
+           }
+       }
+}
     
     private func refreshFrequentPlacesUI() {
-        loadFrequentPlacesData() // Load the latest data
-        populateFrequentPlacesCards() // Re-draw the cards
+        // Asynchronously load places and then repopulate cards on the main thread
+        SavedPlacesManager.shared.loadPlaces { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let places):
+                    self.frequentPlaces = places
+                case .failure(let error):
+                    print("🛑 Error reloading frequent places: \(error.localizedDescription)")
+                    // Decide on fallback: keep old data, or show default placeholders
+                    // For now, let's keep potentially stale data if reload fails,
+                    // or if frequentPlaces is empty, load defaults.
+                    if self.frequentPlaces.isEmpty {
+                         self.frequentPlaces = [
+                             SavedPlace(placeholderName: "Home", isSystemDefault: true),
+                             SavedPlace(placeholderName: "Work", isSystemDefault: true)
+                         ]
+                    }
+                }
+                self.populateFrequentPlacesCards()
+            }
+        }
     }
 
-    // MARK: - UI Setup
+    // MARK: - UI Setup Methods (Decomposed for clarity)
     private func setupScrollView() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.showsVerticalScrollIndicator = false
@@ -131,20 +220,20 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     private func setupContentStack() {
         contentStack.axis = .vertical
-        contentStack.spacing = 28
+        contentStack.spacing = 28 // Overall spacing between major sections
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStack)
         NSLayoutConstraint.activate([
-            contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 20),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -20),
-            contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40)
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 20),
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
         ])
     }
 
     private func setupGreetingAndLogo() {
-        let username = profile.name ?? "User"
+        let username = profile.name 
         let greeting = getGreetingText()
         let greetingLogoAndAreaStack = makeGreetingWithLogoAndAreaBlock(greeting: greeting, username: username, area: "Locating...")
         contentStack.addArrangedSubview(greetingLogoAndAreaStack)
@@ -159,6 +248,10 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         destinationTextField = makeStyledTextField(placeholder: "To (Enter Destination)")
         startTextField.delegate = self
         destinationTextField.delegate = self
+        // Add target for text change to update button state
+        startTextField.addTarget(self, action: #selector(textFieldDidChange), for: .editingChanged)
+        destinationTextField.addTarget(self, action: #selector(textFieldDidChange), for: .editingChanged)
+
 
         let searchFieldsStack = UIStackView(arrangedSubviews: [startTextField, destinationTextField])
         searchFieldsStack.axis = .vertical
@@ -175,36 +268,88 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         contentStack.setCustomSpacing(16, after: searchCardView)
     }
 
-    private func setupStartTripButton() {
-        contentStack.addArrangedSubview(startTripButton)
-        contentStack.setCustomSpacing(30, after: startTripButton)
+    @objc private func textFieldDidChange(_ textField: UITextField) {
+        updateStartTripButtonState()
     }
 
+    private func setupStartTripButton() {
+        contentStack.addArrangedSubview(startTripButton)
+        updateStartTripButtonState() // Set initial state
+        contentStack.setCustomSpacing(30, after: startTripButton)
+    }
+    
     private func setupMapViewCard() {
-        let mapCardView = createCardView()
-        contentStack.addArrangedSubview(mapCardView)
+        let camera = GMSCameraPosition(latitude: 0, longitude: 0, zoom: 14) // 初始值，占位用
         
-        let initialCamera: GMSCameraPosition
-        if let currentLoc = currentLocation {
-            initialCamera = GMSCameraPosition.camera(withTarget: currentLoc, zoom: 14)
-        } else {
-            initialCamera = GMSCameraPosition.camera(withLatitude: 51.5074, longitude: -0.1278, zoom: 12) // London default
-        }
-        mapView = GMSMapView.map(withFrame: .zero, camera: initialCamera)
+        let options = GMSMapViewOptions()
+        options.camera = camera
+        options.frame = .zero
+        
+        let mapView = GMSMapView(options: options)
         mapView.layer.cornerRadius = 12
         mapView.clipsToBounds = true
+        mapView.isMyLocationEnabled = true
         mapView.translatesAutoresizingMaskIntoConstraints = false
         
+        self.mapView = mapView
+        
+        let mapCardView = createCardView()
         mapCardView.addSubview(mapView)
         NSLayoutConstraint.activate([
             mapView.topAnchor.constraint(equalTo: mapCardView.topAnchor),
             mapView.leadingAnchor.constraint(equalTo: mapCardView.leadingAnchor),
             mapView.trailingAnchor.constraint(equalTo: mapCardView.trailingAnchor),
             mapView.bottomAnchor.constraint(equalTo: mapCardView.bottomAnchor),
-            mapView.heightAnchor.constraint(equalToConstant: 200) // Adjusted height
+            mapView.heightAnchor.constraint(equalToConstant: 200)
         ])
+        contentStack.addArrangedSubview(mapCardView)
         contentStack.setCustomSpacing(30, after: mapCardView)
     }
+
+//    private func setupMapViewCard() {
+//        guard let location = self.currentLocation else {
+//               print("❗️currentLocation is nil, skipping setupMapViewCard")
+//               // 可以选择return，也可以显示一个“定位未获取到”的UI
+//               return
+//           }
+//        let mapView = GMSMapView(frame: .zero)
+//        mapView.layer.cornerRadius = 12
+//        mapView.clipsToBounds = true
+//        mapView.isMyLocationEnabled = true
+//        mapView.translatesAutoresizingMaskIntoConstraints = false
+//        self.mapView = mapView
+//        
+//        
+//        let mapCardView = createCardView()
+//        contentStack.addArrangedSubview(mapCardView)
+//        
+//        let camera = GMSCameraPosition.camera(withLatitude: currentLocation?.latitude ?? 51.5074,
+//                                                     longitude: currentLocation?.longitude ?? -0.1278,
+//                                                     zoom: 12) // London default if no location yet
+//        let options = GMSMapViewOptions()
+//        options.camera = camera
+//        options.frame = .zero
+//        
+//        mapView.layer.cornerRadius = 12
+//        mapView.clipsToBounds = true
+//        mapView.translatesAutoresizingMaskIntoConstraints = false
+//        mapView.isMyLocationEnabled = true // Show Google's blue dot for current location
+//
+//        guard let mapView = self.mapView else {
+//            print("mapView is nil")
+//            return
+//        }
+//        mapView.addSubview(mapView)
+//        
+//        NSLayoutConstraint.activate([
+//            mapView.topAnchor.constraint(equalTo: mapCardView.topAnchor),
+//            mapView.leadingAnchor.constraint(equalTo: mapCardView.leadingAnchor),
+//            mapView.trailingAnchor.constraint(equalTo: mapCardView.trailingAnchor),
+//            mapView.bottomAnchor.constraint(equalTo: mapCardView.bottomAnchor),
+//            mapView.heightAnchor.constraint(equalToConstant: 200)
+//        ])
+//        contentStack.setCustomSpacing(30, after: mapCardView)
+//    }
 
     private func setupFrequentPlacesSection() {
         let frequentLabel = makeSectionHeaderLabel(text: "Frequent Places")
@@ -213,12 +358,12 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
         frequentPlacesScrollView = UIScrollView()
         frequentPlacesScrollView.showsHorizontalScrollIndicator = false
-        frequentPlacesScrollView.clipsToBounds = false
+        frequentPlacesScrollView.clipsToBounds = false // Allows card shadows to be visible
         frequentPlacesScrollView.translatesAutoresizingMaskIntoConstraints = false
 
         frequentPlacesStack = UIStackView()
         frequentPlacesStack.axis = .horizontal
-        frequentPlacesStack.spacing = 12
+        frequentPlacesStack.spacing = 12 // Spacing between cards
         frequentPlacesStack.translatesAutoresizingMaskIntoConstraints = false
         frequentPlacesScrollView.addSubview(frequentPlacesStack)
 
@@ -226,12 +371,11 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             frequentPlacesStack.topAnchor.constraint(equalTo: frequentPlacesScrollView.topAnchor),
             frequentPlacesStack.bottomAnchor.constraint(equalTo: frequentPlacesScrollView.bottomAnchor),
             frequentPlacesStack.leadingAnchor.constraint(equalTo: frequentPlacesScrollView.leadingAnchor),
-            frequentPlacesStack.trailingAnchor.constraint(equalTo: frequentPlacesScrollView.trailingAnchor),
-            frequentPlacesStack.heightAnchor.constraint(equalTo: frequentPlacesScrollView.heightAnchor)
+            frequentPlacesStack.trailingAnchor.constraint(equalTo: frequentPlacesScrollView.trailingAnchor)
         ])
         
         contentStack.addArrangedSubview(frequentPlacesScrollView)
-        frequentPlacesScrollView.heightAnchor.constraint(equalToConstant: 70).isActive = true
+        frequentPlacesScrollView.heightAnchor.constraint(equalToConstant: 70).isActive = true // Height of the scrollable area
         contentStack.setCustomSpacing(30, after: frequentPlacesScrollView)
     }
 
@@ -296,25 +440,26 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private func makeSectionHeaderLabel(text: String) -> UILabel {
         let label = UILabel()
         label.text = text
-        label.font = .systemFont(ofSize: 20, weight: .bold) // Slightly smaller section header
+        label.font = .systemFont(ofSize: 20, weight: .bold)
         label.textColor = AppColors.primaryText
         return label
     }
     
     private func makeGreetingWithLogoAndAreaBlock(greeting: String, username: String, area: String) -> UIStackView {
+        // Greeting label
         let greetingLabel = UILabel()
         greetingLabel.numberOfLines = 0
         let greetingAttributedText = NSMutableAttributedString(
             string: "Hi, \(username)! 👋\n",
             attributes: [
-                .font: UIFont.systemFont(ofSize: 26, weight: .bold), // Slightly adjusted size
+                .font: UIFont.systemFont(ofSize: 26, weight: .bold),
                 .foregroundColor: AppColors.greetingText
             ]
         )
         greetingAttributedText.append(NSAttributedString(
             string: greeting,
             attributes: [
-                .font: UIFont.systemFont(ofSize: 20, weight: .semibold), // Adjusted size
+                .font: UIFont.systemFont(ofSize: 20, weight: .semibold),
                 .foregroundColor: AppColors.secondaryText
             ]
         ))
@@ -322,59 +467,71 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         greetingLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         greetingLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let logoImageView = UIImageView(image: UIImage(named: "ontimego_logo"))
-        logoImageView.contentMode = .scaleAspectFit
-        logoImageView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            logoImageView.widthAnchor.constraint(equalToConstant: 50),
-            logoImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 50) // Ensure it doesn't get too tall
-        ])
-        logoImageView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        logoImageView.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        // Logo ImageView
+               let logoImageView = UIImageView(image: UIImage(named: "ontimego_logo"))
+               logoImageView.contentMode = .scaleAspectFit
+               logoImageView.translatesAutoresizingMaskIntoConstraints = false
 
-        let spacerView = UIView()
-        spacerView.translatesAutoresizingMaskIntoConstraints = false
-        spacerView.setContentHuggingPriority(.fittingSizeLevel, for: .horizontal)
-        spacerView.setContentCompressionResistancePriority(.fittingSizeLevel, for: .horizontal)
-        
-        let greetingLogoStack = UIStackView(arrangedSubviews: [greetingLabel, spacerView, logoImageView])
-        greetingLogoStack.axis = .horizontal
-        greetingLogoStack.alignment = .top // Align logo to top of greeting text
-        greetingLogoStack.spacing = 8
+               NSLayoutConstraint.activate([
+                   logoImageView.widthAnchor.constraint(equalToConstant: 100),
+                   logoImageView.heightAnchor.constraint(equalToConstant: 100)
+               ])
+               logoImageView.setContentHuggingPriority(.required, for: .horizontal)
+               logoImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let areaBlock = UIView()
-        areaBlock.backgroundColor = AppColors.areaBlockBackground
-        areaBlock.layer.cornerRadius = 12
-        areaBlock.layer.masksToBounds = true
-        areaBlock.translatesAutoresizingMaskIntoConstraints = false
+               // Spacer View
+               let spacerView = UIView()
+               spacerView.translatesAutoresizingMaskIntoConstraints = false
+               spacerView.setContentHuggingPriority(.fittingSizeLevel, for: .horizontal)
+               spacerView.setContentCompressionResistancePriority(.fittingSizeLevel, for: .horizontal)
 
-        areaLabel = UILabel()
-        areaLabel.text = area
-        areaLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        areaLabel.textColor = AppColors.areaBlockText
-        areaLabel.textAlignment = .center
-        areaLabel.translatesAutoresizingMaskIntoConstraints = false
+               
 
-        areaBlock.addSubview(areaLabel)
-        NSLayoutConstraint.activate([
-            areaLabel.leadingAnchor.constraint(equalTo: areaBlock.leadingAnchor, constant: 10),
-            areaLabel.trailingAnchor.constraint(equalTo: areaBlock.trailingAnchor, constant: -10),
-            areaLabel.topAnchor.constraint(equalTo: areaBlock.topAnchor, constant: 6),
-            areaLabel.bottomAnchor.constraint(equalTo: areaBlock.bottomAnchor, constant: -6)
-        ])
-        areaBlock.setContentHuggingPriority(.required, for: .horizontal)
-        areaBlock.setContentCompressionResistancePriority(.required, for: .horizontal)
+               // Horizontal Stack for Greeting and Logo
+               let greetingLogoStack = UIStackView(arrangedSubviews: [greetingLabel, logoImageView])
+               greetingLogoStack.axis = .horizontal
+               greetingLogoStack.alignment = .fill // Aligns items vertically center
+               greetingLogoStack.spacing = 12 // Space between greeting text and logo
 
-        let mainHeaderStack = UIStackView(arrangedSubviews: [greetingLogoStack, areaBlock])
-        mainHeaderStack.axis = .vertical
-        mainHeaderStack.alignment = .leading
-        mainHeaderStack.spacing = 8
-        
-        return mainHeaderStack
-    }
+               // Area Block (as a small chip/tag)
+               let areaBlock = UIView()
+               areaBlock.backgroundColor = AppColors.areaBlockBackground
+               areaBlock.layer.cornerRadius = 12
+               areaBlock.layer.masksToBounds = true
+               areaBlock.translatesAutoresizingMaskIntoConstraints = false
 
+               areaLabel = UILabel()
+               areaLabel.text = area
+               areaLabel.font = .systemFont(ofSize: 12, weight: .medium)
+               areaLabel.textColor = AppColors.areaBlockText
+               areaLabel.textAlignment = .center
+               areaLabel.translatesAutoresizingMaskIntoConstraints = false
+
+               areaBlock.addSubview(areaLabel)
+               NSLayoutConstraint.activate([
+                   areaLabel.leadingAnchor.constraint(equalTo: areaBlock.leadingAnchor, constant: 10),
+                   areaLabel.trailingAnchor.constraint(equalTo: areaBlock.trailingAnchor, constant: -10),
+                   areaLabel.topAnchor.constraint(equalTo: areaBlock.topAnchor, constant: 6),
+                   areaLabel.bottomAnchor.constraint(equalTo: areaBlock.bottomAnchor, constant: -6)
+               ])
+               areaBlock.setContentHuggingPriority(.required, for: .horizontal)
+               areaBlock.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+               // Main Vertical Stack for the entire header section
+               let mainHeaderStack = UIStackView(arrangedSubviews: [greetingLogoStack, areaBlock])
+               mainHeaderStack.axis = .vertical
+               mainHeaderStack.alignment = .fill // Align areaBlock to the leading edge of the greeting/logo
+               mainHeaderStack.spacing = 8 // Space between greeting/logo row and area block
+               
+               return mainHeaderStack
+           }
     // MARK: - Frequent Places UI & Logic
     private func populateFrequentPlacesCards() {
+        // Ensure stack is available
+        guard frequentPlacesStack != nil else {
+            print("⚠️ frequentPlacesStack is nil in populateFrequentPlacesCards")
+            return
+        }
         frequentPlacesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
         for place in frequentPlaces {
@@ -382,9 +539,10 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             frequentPlacesStack.addArrangedSubview(card)
         }
 
-        addFrequentPlaceButton = UIButton(type: .custom)
+        // Add "Add More" Button
+        addFrequentPlaceButton = UIButton(type: .custom) // Use .custom for better image control
         if #available(iOS 13.0, *) {
-            let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium) // Slightly smaller
+            let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium) // Consistent size
             let plusImage = UIImage(systemName: "plus.circle.fill", withConfiguration: config)
             addFrequentPlaceButton.setImage(plusImage, for: .normal)
         } else {
@@ -394,40 +552,44 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         addFrequentPlaceButton.tintColor = AppColors.accentBlue
         addFrequentPlaceButton.addTarget(self, action: #selector(addNewFrequentPlaceTapped), for: .touchUpInside)
         
-        let addButtonCard = UIView() // Not using createCardView to avoid shadow on a simple button
-        addButtonCard.backgroundColor = .clear // Transparent background for the button container
+        let addButtonCard = UIView() // Simple container, no card styling for the button itself
+        addButtonCard.backgroundColor = .clear
         addButtonCard.addSubview(addFrequentPlaceButton)
         addFrequentPlaceButton.translatesAutoresizingMaskIntoConstraints = false
         
         NSLayoutConstraint.activate([
             addFrequentPlaceButton.centerXAnchor.constraint(equalTo: addButtonCard.centerXAnchor),
             addFrequentPlaceButton.centerYAnchor.constraint(equalTo: addButtonCard.centerYAnchor),
-            addButtonCard.widthAnchor.constraint(equalToConstant: 50), // Smaller touch area for add button
-            addButtonCard.heightAnchor.constraint(equalToConstant: 60)
+            // Constraints for the button itself to control tap area
+            addFrequentPlaceButton.widthAnchor.constraint(equalToConstant: 44),
+            addFrequentPlaceButton.heightAnchor.constraint(equalToConstant: 44),
+            // Constraints for the container card
+            addButtonCard.widthAnchor.constraint(equalToConstant: 50), // Width of the container
+            addButtonCard.heightAnchor.constraint(equalToConstant: 60)  // Height of the container (matches cards)
         ])
         frequentPlacesStack.addArrangedSubview(addButtonCard)
     }
 
     private func createFrequentPlaceCard(savedPlace: SavedPlace) -> UIView {
-        let card = createCardView()
+        let card = createCardView() // Use common card style
 
         let nameLabel = UILabel()
         nameLabel.text = savedPlace.name
-        nameLabel.font = UIFont.systemFont(ofSize: 14, weight: .semibold) // Main name
+        nameLabel.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
         nameLabel.textColor = AppColors.primaryText
         nameLabel.textAlignment = .center
         nameLabel.numberOfLines = 1
         nameLabel.lineBreakMode = .byTruncatingTail
         
         let addressLabel = UILabel()
-        if savedPlace.isSystemDefault && (savedPlace.latitude == 0 && savedPlace.longitude == 0) {
+        if savedPlace.isSystemDefault && savedPlace.address.starts(with: "Tap to set") { // Check if it's a placeholder
             addressLabel.text = "Tap to set"
-            addressLabel.textColor = AppColors.accentBlue
+            addressLabel.textColor = AppColors.accentBlue // Highlight tappable placeholders
             addressLabel.font = UIFont.systemFont(ofSize: 11, weight: .regular)
         } else {
             addressLabel.text = savedPlace.address
             addressLabel.textColor = AppColors.secondaryText
-            addressLabel.font = UIFont.systemFont(ofSize: 10, weight: .regular) // Smaller address text
+            addressLabel.font = UIFont.systemFont(ofSize: 10, weight: .regular)
         }
         addressLabel.textAlignment = .center
         addressLabel.numberOfLines = 1
@@ -435,8 +597,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
         let textStack = UIStackView(arrangedSubviews: [nameLabel, addressLabel])
         textStack.axis = .vertical
-        textStack.spacing = 1
-        textStack.alignment = .center
+        textStack.spacing = 2
+        textStack.alignment = .center // Center text within the stack
         textStack.translatesAutoresizingMaskIntoConstraints = false
 
         card.addSubview(textStack)
@@ -446,19 +608,21 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             textStack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6)
         ])
         
-        let cardWidth: CGFloat = (savedPlace.name.count > 9 || savedPlace.address.count > 18) ? 130 : 110 // Adjusted widths
+        // Dynamic width based on content can be tricky in horizontal stack.
+        // For simplicity, using a slightly adaptive fixed width.
+        let cardWidth: CGFloat = (savedPlace.name.count > 9 || (savedPlace.address.count > 15 && !savedPlace.address.starts(with: "Tap to set"))) ? 130 : 110
         card.widthAnchor.constraint(equalToConstant: cardWidth).isActive = true
-        card.heightAnchor.constraint(equalToConstant: 60).isActive = true
+        card.heightAnchor.constraint(equalToConstant: 60).isActive = true // Fixed height for cards
 
         card.isUserInteractionEnabled = true
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(frequentPlaceCardTapped(_:)))
         card.addGestureRecognizer(tapGesture)
+        // Store ID for identifying which SavedPlace object this card represents
         card.accessibilityIdentifier = savedPlace.id.uuidString
+        // Store name for easier access in tap handler if needed (though ID is primary identifier)
         card.accessibilityLabel = savedPlace.name
-        if savedPlace.isSystemDefault && (savedPlace.latitude == 0 && savedPlace.longitude == 0) {
-             card.accessibilityHint = "PLACEHOLDER"
-        }
-
+        
+        // Add long press for deletion of *custom* places
         if !savedPlace.isSystemDefault {
             let longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPressOnFrequentPlace(_:)))
             card.addGestureRecognizer(longPressGesture)
@@ -468,35 +632,48 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     
     @objc private func frequentPlaceCardTapped(_ sender: UITapGestureRecognizer) {
         guard let cardView = sender.view,
-              let placeIDString = cardView.accessibilityIdentifier,
+              let placeIDString = cardView.accessibilityIdentifier, // This is the UUID string
               let placeID = UUID(uuidString: placeIDString),
               let tappedPlace = frequentPlaces.first(where: { $0.id == placeID }) else {
-            print("🛑 Could not identify frequent place from tap.")
+            print("🛑 Could not identify frequent place from tap via ID.")
+            // Fallback or alternative identification if needed, e.g. by accessibilityLabel if ID fails temporarily
+            if let cardLabel = sender.view?.accessibilityLabel,
+               let fallbackPlace = frequentPlaces.first(where: { $0.name == cardLabel }) {
+                handleFrequentPlaceTap(fallbackPlace)
+            }
             return
         }
+        handleFrequentPlaceTap(tappedPlace)
+    }
 
-        if tappedPlace.isSystemDefault && (tappedPlace.latitude == 0 && tappedPlace.longitude == 0) {
-            currentlySettingPlaceName = tappedPlace.name // "Home" or "Work"
+    // Helper function to handle the tap logic
+    private func handleFrequentPlaceTap(_ tappedPlace: SavedPlace) {
+        // Check if it's a placeholder by its specific address string and system default flag
+        if tappedPlace.isSystemDefault && tappedPlace.address.starts(with: "Tap to set") {
+            self.currentlySettingPlaceName = tappedPlace.name // Store "Home" or "Work"
+            
             let autocompleteController = GMSAutocompleteViewController()
             autocompleteController.delegate = self
+            // Use specific tags for setting Home/Work based on the name of the placeholder
             autocompleteController.view.tag = (tappedPlace.name == "Home") ? GMSAutocompleteTag.setHome.rawValue : GMSAutocompleteTag.setWork.rawValue
             
             let filter = GMSAutocompleteFilter()
             filter.countries = ["GB"]
             autocompleteController.autocompleteFilter = filter
             present(autocompleteController, animated: true, completion: nil)
-        } else {
-            destinationTextField.text = tappedPlace.address
-            print("ℹ️ \(tappedPlace.name) tapped, Address: \(tappedPlace.address)")
+        } else if !(tappedPlace.isSystemDefault && tappedPlace.address.starts(with: "Tap to set")) {
+            // A configured place (either a set Home/Work or a custom place) was tapped
+            destinationTextField.text = tappedPlace.address // Use the stored address
+            print("ℹ️ Frequent place '\(tappedPlace.name)' selected. Address: \(tappedPlace.address)")
             updateStartTripButtonState()
         }
     }
-
+    
     @objc private func addNewFrequentPlaceTapped() {
-        currentlySettingPlaceName = nil // Indicates a new custom place
+        self.currentlySettingPlaceName = nil
         let autocompleteController = GMSAutocompleteViewController()
         autocompleteController.delegate = self
-        autocompleteController.view.tag = GMSAutocompleteTag.addFrequent.rawValue
+        autocompleteController.view.tag = GMSAutocompleteTag.addFrequent.rawValue // Tag for adding new
         
         let filter = GMSAutocompleteFilter()
         filter.countries = ["GB"]
@@ -510,7 +687,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                   let placeIDString = cardView.accessibilityIdentifier,
                   let placeID = UUID(uuidString: placeIDString),
                   let placeToRemove = frequentPlaces.first(where: { $0.id == placeID }),
-                  !placeToRemove.isSystemDefault else {
+                  !placeToRemove.isSystemDefault else { // Only custom places can be deleted this way
+                print("ℹ️ System default places (Home/Work) cannot be deleted via long press, only reset by tapping.")
                 return
             }
 
@@ -518,12 +696,23 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                                           message: "Are you sure you want to delete this frequent place?",
                                           preferredStyle: .actionSheet)
             alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { [weak self] _ in
-                SavedPlacesManager.shared.removePlace(withId: placeID)
-                self?.refreshFrequentPlacesUI()
+                SavedPlacesManager.shared.removePlace(withId: placeID,
+                                                      isSystemDefault: placeToRemove.isSystemDefault, // Will be false
+                                                      defaultName: placeToRemove.name) { error in
+                    DispatchQueue.main.async {
+                        if let error = error {
+                            print("🛑 Error deleting frequent place: \(error.localizedDescription)")
+                            self?.showErrorAlert(message: "Could not delete \(placeToRemove.name). Please try again.")
+                        } else {
+                            print("✅ Frequent place '\(placeToRemove.name)' deleted.")
+                            self?.refreshFrequentPlacesUI()
+                        }
+                    }
+                }
             }))
             alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
             
-            if let popoverController = alert.popoverPresentationController {
+            if let popoverController = alert.popoverPresentationController { // For iPad support
                 popoverController.sourceView = cardView
                 popoverController.sourceRect = cardView.bounds
             }
@@ -531,7 +720,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
     }
     
-    // MARK: - Location and API Methods
+    // MARK: - Location Manager Delegate & Helpers
     func getGreetingText() -> String {
         let hour = Calendar.current.component(.hour, from: Date())
         switch hour {
@@ -547,11 +736,11 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         geo.reverseGeocodeLocation(loc) { placemarks, error in
             if let error = error {
                 print("🛑 Reverse geocoding error: \(error.localizedDescription)")
-                completion("Unknown area")
+                completion("Area unknown") // Provide a default
                 return
             }
             let placemark = placemarks?.first
-            let area = placemark?.subLocality ?? placemark?.locality ?? placemark?.name ?? "Unknown area"
+            let area = placemark?.subLocality ?? placemark?.locality ?? placemark?.name ?? "Area unknown"
             completion(area)
         }
     }
@@ -562,77 +751,122 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     
     private func setupLocationManager() {
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        locationManager.distanceFilter = 50 // 单位是米，10米刷新一次
         locationManager.requestWhenInUseAuthorization()
-        // Check authorization status before starting
-        if CLLocationManager.locationServicesEnabled() {
-            switch locationManager.authorizationStatus { // Use instance property
-            case .notDetermined, .restricted, .denied:
-                print("⚠️ Location services not authorized or restricted.")
-            case .authorizedAlways, .authorizedWhenInUse:
-                locationManager.startUpdatingLocation()
-            @unknown default:
-                print("⚠️ Unknown location authorization status.")
-            }
-        } else {
-            print("⚠️ Location services are not enabled on this device.")
-        }
     }
+
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else { return }
-        
-        if startTextField.text?.isEmpty ?? true || startTextField.text?.lowercased() == "current location" {
-            startTextField.text = "Current Location"
+        // 首先尝试获取 location，因为两个分支都可能需要它
+        guard let lastReceivedLocation = locations.last else {
+            print("⚠️ locationManager didUpdateLocations: locations array was empty.")
+            return // 如果 locations 数组为空，则直接返回
         }
 
-        if currentLocation == nil { // First location update
-            currentLocation = location.coordinate
-            mapView.camera = GMSCameraPosition.camera(withTarget: location.coordinate, zoom: 14)
-            // Add a subtle marker for current location, or rely on Google's blue dot if myLocationEnabled is true
-            // let currentMarker = GMSMarker(position: location.coordinate)
-            // currentMarker.icon = GMSMarker.markerImage(with: AppColors.accentBlue) // Or a custom dot
-            // currentMarker.map = mapView
-            mapView.isMyLocationEnabled = true // Show Google's blue dot
+        // 然后检查 UI 布局是否完成
+        guard self.isUILayoutComplete else {
+            // UI 尚未完成，但我们有 lastReceivedLocation
+            print("⚠️ locationManager didUpdateLocations: UI layout not yet complete. Buffering location.")
+            // 使用上面获取的 lastReceivedLocation 来更新 currentLocation
+            self.currentLocation = lastReceivedLocation.coordinate
+            
+            // 可以在这里考虑，如果 isUILayoutComplete 稍后变为 true，
+            // 是否需要基于这个已缓冲的 currentLocation 立即触发一次 displayAttractions。
+            // 这通常通过在 isUILayoutComplete 变为 true 的地方检查 currentLocation 是否已有值来实现。
+            return
+        }
 
+        // ---- 如果代码执行到这里，意味着 isUILayoutComplete 为 true 并且 lastReceivedLocation (现在重命名为 location) 有值 ----
+        let location = lastReceivedLocation // 现在可以安全使用 location
+        let newCoordinate = location.coordinate
+        let isFirstMeaningfulUpdate = (currentLocation == nil ||
+                                      (currentLocation!.latitude != newCoordinate.latitude || currentLocation!.longitude != newCoordinate.longitude))
+
+
+        if let startTF = self.startTextField {
+            if startTF.text?.isEmpty ?? true || startTF.text?.lowercased() == "current location" {
+                startTF.text = "Current Location"
+            }
+        } else {
+            print("⚠️ locationManager didUpdateLocations: startTextField was nil when trying to update its text (even after UI complete check).")
+        }
+
+        currentLocation = newCoordinate
+
+        if isFirstMeaningfulUpdate {
+            print("ℹ️ Meaningful location update (or first after UI ready): \(newCoordinate)")
+            if let mapView = self.mapView {
+                // 只有在地图的当前目标是 (0,0) 这个默认值时才移动相机到当前位置，
+                // 或者您可以有其他逻辑来决定何时自动移动相机。
+                if mapView.camera.target.latitude == 0 && mapView.camera.target.longitude == 0 {
+                    mapView.camera = GMSCameraPosition.camera(withTarget: newCoordinate, zoom: 14)
+                }
+                mapView.isMyLocationEnabled = true
+            } else {
+                print("⚠️ locationManager didUpdateLocations: mapView was nil.")
+            }
             displayAttractions()
         }
-        currentLocation = location.coordinate // Continuously update for other uses if needed
         
-        fetchCurrentAreaName(from: location.coordinate) { [weak self] area in
+        fetchCurrentAreaName(from: newCoordinate) { [weak self] area in
             DispatchQueue.main.async { self?.updateAreaBlock(area) }
         }
-        // Consider stopping updates if only needed once or for a short period to save battery
-        // locationManager.stopUpdatingLocation()
+        
+        // locationManager.stopUpdatingLocation() // Consider when to stop
     }
+
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("🛑 Location manager failed with error: \(error.localizedDescription)")
-        // Handle error, e.g., show an alert to the user or default to a generic location
-        areaLabel?.text = "Area unknown"
+        areaLabel?.text = "Area unknown (Error)"
+        // Potentially show an alert to the user
     }
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        // Handle changes in authorization status, e.g., start updating if now authorized
+        print("ℹ️ Location authorization status changed to: \(manager.authorizationStatus.rawValue)")
         switch manager.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
-            print("ℹ️ Location authorization granted.")
-            locationManager.startUpdatingLocation()
+        case .authorizedWhenInUse, .authorizedAlways:
+            print("✅ Location access granted. Starting location updates.")
+            locationManager.startUpdatingLocation() // Start if now authorized
         case .denied, .restricted:
-            print("⚠️ Location authorization denied or restricted.")
-            // Optionally guide user to settings
-            areaLabel?.text = "Location access denied"
+            print("❌ Location access denied or restricted.")
+            currentLocation = nil // Clear current location if permission is revoked
+            areaLabel?.text = "Location Denied"
+            // Update UI, maybe disable location-dependent features or show message
         case .notDetermined:
-            print("ℹ️ Location authorization not determined.")
+            print("🤷 Location authorization not determined yet.")
+            // App will wait for user's decision from the prompt
         @unknown default:
             print("⚠️ Unknown location authorization status after change.")
         }
     }
 
-    
-    // MARK: - Attractions Loading
+    // MARK: - Attractions Loading & UI (Ensure API_KEY is used from APIKeys.googleMaps)
      private func displayAttractions() {
-        guard let coord = currentLocation else { return }
+        guard self.isUILayoutComplete else { // **** 检查 isUILayoutComplete ****
+             print("⚠️ displayAttractions: UI layout not complete. Aborting.")
+             return
+         }
+         
+        guard let coord = currentLocation else {
+            print("ℹ️ Cannot display attractions, current location is nil.")
+            DispatchQueue.main.async {
+                self.nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+                let noLocationLabel = UILabel()
+                noLocationLabel.text = "Enable location to see nearby attractions."
+                noLocationLabel.font = .systemFont(ofSize: 14)
+                noLocationLabel.textColor = AppColors.secondaryText
+                noLocationLabel.textAlignment = .center
+                self.nearAttractionsStack.addArrangedSubview(noLocationLabel)
+            }
+            return
+        }
+         guard self.nearAttractionsStack != nil else {
+            print("🛑 displayAttractions: nearAttractionsStack is unexpectedly nil!")
+            return
+        }
+
         nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         displayedPlaceNames.removeAll()
 
@@ -643,12 +877,11 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
         func fetchOneAttractionRecursive() {
             guard fetchedCount < desiredCount, candidatesProcessed < maxTries else {
-                if fetchedCount == 0 && candidatesProcessed >= maxTries {
-                    print("ℹ️ Max tries (\(maxTries)) reached for attractions. No new attractions with photos found.")
-                    // Update UI to indicate no attractions found, if desired
+                if fetchedCount == 0 && self.nearAttractionsStack.arrangedSubviews.isEmpty {
                     DispatchQueue.main.async {
                         let noAttractionsLabel = UILabel()
                         noAttractionsLabel.text = "No attractions found nearby."
+                        noAttractionsLabel.font = .systemFont(ofSize: 14)
                         noAttractionsLabel.textColor = AppColors.secondaryText
                         noAttractionsLabel.textAlignment = .center
                         self.nearAttractionsStack.addArrangedSubview(noAttractionsLabel)
@@ -658,30 +891,34 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             }
             candidatesProcessed += 1
 
-            fetchNearbyAttractionImage(coord: coord) { [weak self] image, name, placeCoord in
+            self.fetchNearbyAttractionImage(coord: coord) { [weak self] image, name, placeCoord in
                 guard let self = self else { return }
                 
                 if let img = image, let placeName = name, let placeCoordinate = placeCoord, !self.displayedPlaceNames.contains(placeName) {
                     self.displayedPlaceNames.insert(placeName)
                     DispatchQueue.main.async {
+                        // Clear "no attractions" label if it exists
+                        if let label = self.nearAttractionsStack.arrangedSubviews.first as? UILabel,
+                           label.text == "No attractions found nearby." || label.text == "Enable location to see nearby attractions." {
+                            label.removeFromSuperview()
+                        }
                         let card = self.makeAttractionCard(name: placeName, image: img, coord: placeCoordinate)
                         self.nearAttractionsStack.addArrangedSubview(card)
                     }
                     fetchedCount += 1
                 }
-                fetchOneAttractionRecursive() // Continue fetching
+                // Continue fetching if conditions allow
+                fetchOneAttractionRecursive()
             }
         }
         fetchOneAttractionRecursive()
     }
 
-    // In HomeViewController.swift
-
     private func fetchNearbyAttractionImage(
         coord: CLLocationCoordinate2D,
         completion: @escaping (UIImage?, String?, CLLocationCoordinate2D?) -> Void
     ) {
-        let apiKey = APIKeys.googleMaps // Use global key
+        let apiKey = APIKeys.googleMaps
 
         let urlStr = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=\(coord.latitude),\(coord.longitude)&radius=3000&type=tourist_attraction&key=\(apiKey)"
         guard let url = URL(string: urlStr) else {
@@ -692,23 +929,18 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             if let error = error { print("🛑 NS Error: \(error.localizedDescription)"); completion(nil, nil, nil); return }
             guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
                 print("🛑 NS Error: HTTP Status \( (response as? HTTPURLResponse)?.statusCode ?? 0 ) for URL: \(urlStr)")
-                if let data = data, let responseBody = String(data: data, encoding: .utf8) {
-                    print("🔗 NS Response body: \(responseBody)")
-                }
+                if let data = data, let responseBody = String(data: data, encoding: .utf8) { print("🔗 NS Response body: \(responseBody)") }
                 completion(nil, nil, nil); return
             }
             guard let self = self, let data = data else { completion(nil, nil, nil); return }
 
-            var jsonResponse: [String: Any]? // Declare jsonResponse here to be accessible in the error print
+            var jsonResponse: [String: Any]?
             do {
                 jsonResponse = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                guard let json = jsonResponse, // Use the declared jsonResponse
+                guard let json = jsonResponse,
                       let results = json["results"] as? [[String: Any]] else {
-                    // Now jsonResponse can be safely accessed here for its status
                     print("🛑 NS Error: JSON Parsing failed or 'results' key missing. API Status: \(jsonResponse?["status"] as? String ?? "N/A")")
-                    if let responseString = String(data: data, encoding: .utf8) {
-                        print("🔗 Raw JSON Response (Nearby Search): \(responseString)")
-                    }
+                    if let responseString = String(data: data, encoding: .utf8) { print("🔗 Raw JSON Response (Nearby Search): \(responseString)") }
                     completion(nil, nil, nil); return
                 }
                 
@@ -717,8 +949,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                       let name = place["name"] as? String,
                       let geo = place["geometry"] as? [String: Any], let loc = geo["location"] as? [String: Any],
                       let lat = loc["lat"] as? Double, let lng = loc["lng"] as? Double,
-                      let photos = place["photos"] as? [[String: Any]], let ref = photos.first?["photo_reference"] as? String else {
-                    // This is not necessarily an error, just means no suitable candidate in this batch
+                      let photosArray = place["photos"] as? [[String: Any]], !photosArray.isEmpty,
+                      let ref = photosArray.first?["photo_reference"] as? String else {
                     completion(nil, nil, nil); return
                 }
                 let attractionCoord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
@@ -731,28 +963,20 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                     if let pError = pError { print("🛑 PF Error: \(pError.localizedDescription)"); completion(nil, name, attractionCoord); return }
                     guard let pHTTP = pResponse as? HTTPURLResponse, (200...299).contains(pHTTP.statusCode) else {
                          print("🛑 PF Error: HTTP Status \( (pResponse as? HTTPURLResponse)?.statusCode ?? 0 ) for URL: \(photoURLStr)")
-                         if let photoData = pData, let responseBody = String(data: photoData, encoding: .utf8) {
-                             print("🔗 PF Response body: \(responseBody)")
-                         }
+                         if let photoData = pData, let responseBody = String(data: photoData, encoding: .utf8) { print("🔗 PF Response body: \(responseBody)") }
                          completion(nil, name, attractionCoord); return
                     }
                     guard let data = pData, let image = UIImage(data: data) else { print("🛑 PF Error: No image data from photo ref \(ref)"); completion(nil, name, attractionCoord); return }
                     self.imageCache.setObject(image, forKey: ref as NSString)
                     completion(image, name, attractionCoord)
                 }.resume()
-            } catch {
-                // This catch block handles errors from 'try JSONSerialization.jsonObject'
-                print("🛑 NS Error: JSON Serialization Catch Block: \(error.localizedDescription)")
-                if let responseString = String(data: data, encoding: .utf8) { // 'data' is captured and available here
-                    print("🔗 Raw JSON Response causing serialization error (Nearby Search): \(responseString)")
-                }
-                completion(nil, nil, nil)
-            }
+            } catch { print("🛑 NS Error: JSON Catch \(error.localizedDescription)"); completion(nil, nil, nil) }
         }.resume()
     }
+    
     private func makeAttractionCard(name: String, image: UIImage, coord: CLLocationCoordinate2D) -> UIView {
         let card = createCardView()
-        card.widthAnchor.constraint(equalToConstant: 150).isActive = true // Slightly narrower cards
+        card.widthAnchor.constraint(equalToConstant: 150).isActive = true
         card.heightAnchor.constraint(equalToConstant: 160).isActive = true
 
         let imageView = UIImageView(image: image)
@@ -762,12 +986,12 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         imageView.layer.cornerRadius = 10
         imageView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
 
-        let textContentView = UIView() // Container for text for better padding control
+        let textContentView = UIView()
         textContentView.translatesAutoresizingMaskIntoConstraints = false
         
         let label = UILabel()
         label.text = name
-        label.font = .systemFont(ofSize: 13, weight: .semibold) // Slightly smaller
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
         label.textColor = AppColors.primaryText
         label.textAlignment = .left
         label.numberOfLines = 2
@@ -781,7 +1005,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             imageView.topAnchor.constraint(equalTo: card.topAnchor),
             imageView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            imageView.heightAnchor.constraint(equalTo: card.heightAnchor, multiplier: 0.7), // Image takes more space
+            imageView.heightAnchor.constraint(equalTo: card.heightAnchor, multiplier: 0.7),
 
             textContentView.topAnchor.constraint(equalTo: imageView.bottomAnchor),
             textContentView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
@@ -793,24 +1017,33 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             label.trailingAnchor.constraint(equalTo: textContentView.trailingAnchor, constant: -10),
             label.bottomAnchor.constraint(lessThanOrEqualTo: textContentView.bottomAnchor, constant: -6)
         ])
-        card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(cardTapped(_:))))
-        card.accessibilityLabel = name // For identifying which card was tapped
-        card.accessibilityValue = "\(coord.latitude),\(coord.longitude)" // Store coordinates
+        card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(attractionCardTapped(_:))))
+        card.accessibilityLabel = name
+        card.accessibilityValue = "\(coord.latitude),\(coord.longitude)"
         return card
     }
 
-    @objc private func cardTapped(_ sender: UITapGestureRecognizer) { // This is for ATTRACTION cards
+    @objc private func attractionCardTapped(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view,
-              let coordStr = view.accessibilityValue,
-              let endCoord = parseCoord(from: coordStr),
+              let coordStr = view.accessibilityValue, // Stored as Lat,Lng string
+              let _ = parseCoord(from: coordStr),
               let name = view.accessibilityLabel else { return }
 
-        // Set as destination
-        destinationTextField.text = name // Or a more formatted address if available
-        // Optionally, trigger route calculation or preview immediately
-        // For now, user needs to tap "Start the Trip"
-        print("Attraction \(name) selected as destination.")
+        destinationTextField.text = name // Or a more detailed address if available
         updateStartTripButtonState()
+        
+        // Optionally, directly initiate route preview if desired
+        // if let start = currentLocation {
+        //    pushRoute(start: start, end: endCoord, startLabel: "Current Location", destLabel: name)
+        // } else if let startText = startTextField.text, !startText.isEmpty, startText.lowercased() != "current location" {
+        //    geocodeAddress(startText) { [weak self] sCoord in
+        //        if let sc = sCoord {
+        //            self?.pushRoute(start: sc, end: endCoord, startLabel: startText, destLabel: name)
+        //        }
+        //    }
+        // } else {
+        //    showErrorAlert(message: "Please set a starting point or enable location services.")
+        // }
     }
     
     private func parseCoord(from string: String) -> CLLocationCoordinate2D? {
@@ -820,7 +1053,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
     
     private func pushRoute(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D, startLabel: String?, destLabel: String?) {
-        let vc = RoutePreviewViewController()
+        let vc = RoutePreviewViewController() // Ensure RoutePreviewViewController is defined
         vc.startLocation = start
         vc.destinationLocation = end
         vc.startLabelName = startLabel
@@ -830,32 +1063,33 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     // MARK: - Trip Button Action
     @objc private func startTripButtonTapped() {
-        guard let destinationAddress = destinationTextField.text, !destinationAddress.isEmpty else {
-            // Optionally show an alert if destination is empty
+        guard let destinationAddress = destinationTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines), !destinationAddress.isEmpty else {
+            showErrorAlert(title: "Missing Destination", message: "Please enter a destination.")
             return
         }
+        
         let routePreviewVC = RoutePreviewViewController()
-        let startAddressText = startTextField.text
+        let startAddressText = startTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines)
         
         if let startAddr = startAddressText, !startAddr.isEmpty, startAddr.lowercased() != "current location" {
             geocodeAddress(startAddr) { [weak self] startCoord in
                 guard let self = self, let sc = startCoord else {
-                    print("🛑 Geocode start address failed: \(startAddr)"); return
+                    self?.showErrorAlert(message: "Could not find starting address: \"\(startAddr)\". Please try again or use current location."); return
                 }
                 self.geocodeAddress(destinationAddress) { endCoord in
                     guard let ec = endCoord else {
-                        print("🛑 Geocode destination address failed: \(destinationAddress)"); return
+                        self.showErrorAlert(message: "Could not find destination address: \"\(destinationAddress)\"."); return
                     }
                     self.navigateToPreview(vc: routePreviewVC, start: sc, end: ec, startLabel: startAddr, destLabel: destinationAddress)
                 }
             }
-        } else {
+        } else { // Use current location
             guard let current = currentLocation else {
-                print("🛑 Current location is not available to use as start."); return
+                self.showErrorAlert(message: "Current location is not available. Please ensure location services are enabled or enter a starting address."); return
             }
             geocodeAddress(destinationAddress) { [weak self] endCoord in
                 guard let self = self, let ec = endCoord else {
-                    print("🛑 Geocode destination address failed: \(destinationAddress)"); return
+                    self?.showErrorAlert(message: "Could not find destination address: \"\(destinationAddress)\"."); return
                 }
                 self.navigateToPreview(vc: routePreviewVC, start: current, end: ec, startLabel: "Current Location", destLabel: destinationAddress)
             }
@@ -884,10 +1118,19 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
     
     private func updateStartTripButtonState() {
-        let hasStart = !(startTextField.text?.isEmpty ?? true)
-        let hasDestination = !(destinationTextField.text?.isEmpty ?? true)
-        startTripButton.isEnabled = hasStart && hasDestination
-        startTripButton.alpha = startTripButton.isEnabled ? 1.0 : 0.6
+        let isStartValid = !(startTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let isDestinationValid = !(destinationTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        
+        startTripButton.isEnabled = isStartValid && isDestinationValid
+        startTripButton.alpha = startTripButton.isEnabled ? 1.0 : 0.5
+    }
+    
+    private func showErrorAlert(title: String = "Error", message: String) {
+        DispatchQueue.main.async {
+            let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            self.present(alert, animated: true)
+        }
     }
     
     // MARK: - UITextFieldDelegate & GMSAutocompleteViewControllerDelegate
@@ -896,24 +1139,15 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         autocompleteController.delegate = self
         autocompleteController.modalPresentationStyle = .fullScreen
         
-        // Apply some basic styling to GMSAutocompleteViewController if possible
-        // Note: Deep customization of GMSAutocompleteViewController is limited.
-        // These might not all take effect or might require different approaches.
-        let appearance = GMSAutocompleteViewController() // For accessing styling properties if available
-        appearance.primaryTextColor = AppColors.primaryText
-        appearance.secondaryTextColor = AppColors.secondaryText
-        appearance.tableCellBackgroundColor = AppColors.cardBackground
-        appearance.tableCellSeparatorColor = AppColors.subtleGray
-        // For actual controller presented:
+        // Style Autocomplete
         autocompleteController.primaryTextColor = AppColors.primaryText
         autocompleteController.secondaryTextColor = AppColors.secondaryText
         autocompleteController.tableCellBackgroundColor = AppColors.cardBackground
         autocompleteController.tableCellSeparatorColor = AppColors.subtleGray
         autocompleteController.tintColor = AppColors.accentBlue
 
-
         let filter = GMSAutocompleteFilter()
-        filter.countries = ["GB"]
+        filter.countries = ["GB"] // United Kingdom
         autocompleteController.autocompleteFilter = filter
 
         if textField == startTextField {
@@ -926,85 +1160,111 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
 
     func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) {
-        guard let tagValue = GMSAutocompleteTag(rawValue: viewController.view.tag) else {
+        // Get the tag directly, it's a non-optional Int.
+        let tagRawValue = viewController.view.tag
+        
+        // Attempt to initialize the GMSAutocompleteTag enum from the raw integer value.
+        // The GMSAutocompleteTag(rawValue:) initializer is failable and returns an Optional GMSAutocompleteTag?.
+        guard let tagValue = GMSAutocompleteTag(rawValue: tagRawValue) else {
+            print("🛑 Unknown autocomplete tag raw value: \(tagRawValue)") // Print the raw value for debugging
             dismiss(animated: true, completion: nil)
             return
         }
         
+        // Proceed with the rest of your logic using tagValue
+        let placeAddress = place.formattedAddress ?? place.name ?? "Selected Location"
+        let placeCoordinate = place.coordinate
+
         dismiss(animated: true) { [weak self] in
             guard let self = self else { return }
             
-            let placeAddress = place.formattedAddress ?? place.name ?? "Selected Location"
-            let placeCoordinate = place.coordinate
-
             switch tagValue {
             case .startField:
                 self.startTextField.text = placeAddress
-                self.currentLocation = placeCoordinate // User explicitly selected a start
+                self.currentLocation = placeCoordinate
             case .destinationField:
                 self.destinationTextField.text = placeAddress
             case .setHome:
-                let homePlace = SavedPlace(name: "Home", address: placeAddress, coordinate: placeCoordinate, isSystemDefault: true)
-                SavedPlacesManager.shared.addOrUpdatePlace(homePlace)
-                self.refreshFrequentPlacesUI()
-                self.currentlySettingPlaceName = nil
+                // Logic to find and update or create Home
+                let homeID = self.frequentPlaces.first(where: { $0.name == "Home" && $0.isSystemDefault })?.id ?? UUID()
+                let homePlace = SavedPlace(id: homeID,
+                                           name: "Home",
+                                           address: placeAddress,
+                                           coordinate: placeCoordinate,
+                                           isSystemDefault: true)
+                self.saveFrequentPlaceAndUpdateUI(homePlace)
             case .setWork:
-                let workPlace = SavedPlace(name: "Work", address: placeAddress, coordinate: placeCoordinate, isSystemDefault: true)
-                SavedPlacesManager.shared.addOrUpdatePlace(workPlace)
-                self.refreshFrequentPlacesUI()
-                self.currentlySettingPlaceName = nil
+                // Logic to find and update or create Work
+                let workID = self.frequentPlaces.first(where: { $0.name == "Work" && $0.isSystemDefault })?.id ?? UUID()
+                let workPlace = SavedPlace(id: workID,
+                                           name: "Work",
+                                           address: placeAddress,
+                                           coordinate: placeCoordinate,
+                                           isSystemDefault: true)
+                self.saveFrequentPlaceAndUpdateUI(workPlace)
             case .addFrequent:
-                // If currentlySettingPlaceName was set (e.g. "Gym"), use it, else prompt.
-                // For the "+" button, currentlySettingPlaceName should be nil.
-                self.promptForFrequentPlaceCustomName(for: place, selectedAddress: placeAddress, selectedCoordinate: placeCoordinate)
+                self.promptForFrequentPlaceCustomName(selectedPlace: place) // Pass GMSPlace
             }
             self.updateStartTripButtonState()
         }
     }
     
-    private func promptForFrequentPlaceCustomName(for googlePlace: GMSPlace?, selectedAddress: String, selectedCoordinate: CLLocationCoordinate2D) {
-        let alertController = UIAlertController(title: "Save Frequent Place", message: "Enter a name for this location:", preferredStyle: .alert)
+    private func saveFrequentPlaceAndUpdateUI(_ place: SavedPlace) {
+        SavedPlacesManager.shared.addOrUpdatePlace(place) { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let error = error {
+                    print("🛑 Error saving frequent place '\(place.name)' to Firestore: \(error.localizedDescription)")
+                    self.showErrorAlert(message: "Could not save \"\(place.name)\". Please try again.")
+                } else {
+                    print("✅ Frequent place '\(place.name)' saved to Firestore.")
+                    self.refreshFrequentPlacesUI() // Refresh UI to show the new/updated place
+                }
+            }
+        }
+    }
+    
+    private func promptForFrequentPlaceCustomName(selectedPlace: GMSPlace) {
+        let alertController = UIAlertController(title: "Save Frequent Place",
+                                                message: "Enter a name for this location:",
+                                                preferredStyle: .alert)
         
         alertController.addTextField { textField in
-            textField.placeholder = "e.g., Gym, Cafe"
-            textField.text = googlePlace?.name // Pre-fill with Google Place name if available
+            textField.placeholder = "e.g., Gym, Parents' House"
+            textField.text = selectedPlace.name // Pre-fill with the place's name
         }
         
         let saveAction = UIAlertAction(title: "Save", style: .default) { [weak self, weak alertController] _ in
             guard let self = self,
                   let nameField = alertController?.textFields?.first,
                   let customName = nameField.text?.trimmingCharacters(in: .whitespacesAndNewlines), !customName.isEmpty else {
-                // Optionally show an alert for empty name
+                // Optionally, show an alert if the name is empty
                 return
             }
             
+            // Prevent saving "Home" or "Work" as custom names again if they are handled as system defaults
             if ["home", "work"].contains(customName.lowercased()) {
-                 let errorAlert = UIAlertController(title: "Name Reserved", message: "\"Home\" and \"Work\" are special. Please set them by tapping their cards or choose a different name.", preferredStyle: .alert)
-                errorAlert.addAction(UIAlertAction(title: "OK", style: .default))
-                self.present(errorAlert, animated: true)
+                 self.showErrorAlert(title: "Name Reserved", message: "\"Home\" and \"Work\" are special. Please choose a different name or set them by tapping their cards.")
                 return
             }
             
+            // Check for duplicate names among *custom* frequent places
             if self.frequentPlaces.contains(where: { !$0.isSystemDefault && $0.name.lowercased() == customName.lowercased() }) {
-                let errorAlert = UIAlertController(title: "Name Exists", message: "A frequent place with this name already exists.", preferredStyle: .alert)
-                errorAlert.addAction(UIAlertAction(title: "OK", style: .default))
-                self.present(errorAlert, animated: true)
+                self.showErrorAlert(title: "Name Exists", message: "A frequent place with this name already exists. Please choose a different name.")
                 return
             }
 
             let newFrequentPlace = SavedPlace(name: customName,
-                                              address: selectedAddress,
-                                              coordinate: selectedCoordinate,
-                                              isSystemDefault: false)
-            SavedPlacesManager.shared.addOrUpdatePlace(newFrequentPlace)
-            self.refreshFrequentPlacesUI()
+                                              address: selectedPlace.formattedAddress ?? selectedPlace.name ?? "Unknown Address",
+                                              coordinate: selectedPlace.coordinate,
+                                              isSystemDefault: false) // Custom places are not system defaults
+            self.saveFrequentPlaceAndUpdateUI(newFrequentPlace)
         }
         
         alertController.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alertController.addAction(saveAction)
         present(alertController, animated: true)
     }
-
 
     func viewController(_ viewController: GMSAutocompleteViewController, didFailAutocompleteWithError error: Error) {
         print("❌ Autocomplete error: \(error.localizedDescription)")
@@ -1022,7 +1282,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
         tapGesture.cancelsTouchesInView = false
-        scrollView.addGestureRecognizer(tapGesture) // Add to scrollView so it doesn't interfere with card taps
+        scrollView.addGestureRecognizer(tapGesture)
     }
    
     @objc private func keyboardWillShow(_ notification: Notification) {
@@ -1030,7 +1290,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         let keyboardHeight = keyboardFrame.height
         
         var contentInset = scrollView.contentInset
-        contentInset.bottom = keyboardHeight + 20
+        contentInset.bottom = keyboardHeight + 20 // Add a little extra padding
         scrollView.contentInset = contentInset
         scrollView.scrollIndicatorInsets = contentInset
     }

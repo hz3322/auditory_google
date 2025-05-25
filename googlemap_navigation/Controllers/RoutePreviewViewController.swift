@@ -129,7 +129,10 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     // MARK: - Map Setup
     private func setupMap() {
         let camera = GMSCameraPosition.camera(withLatitude: 51.5074, longitude: -0.1278, zoom: 12) // Default London
-        mapView = GMSMapView.map(withFrame: view.bounds, camera: camera) // Use convenience init
+        let options = GMSMapViewOptions()
+        options.camera = camera
+        options.frame = .zero
+
         mapView.delegate = self
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     
@@ -472,7 +475,7 @@ extension UILabel {
     }
 
     override open var intrinsicContentSize: CGSize {
-        guard let text = self.text else { return super.intrinsicContentSize }
+        guard self.text != nil else { return super.intrinsicContentSize }
         var contentSize = super.intrinsicContentSize
         if let insets = padding {
             contentSize.height += insets.top + insets.bottom
