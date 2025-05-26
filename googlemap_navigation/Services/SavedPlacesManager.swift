@@ -40,11 +40,20 @@ struct SavedPlace: Codable, Identifiable, Hashable {
 class SavedPlacesManager {
     static let shared = SavedPlacesManager()
     private let db = Firestore.firestore()
+    
+    // Add a property to store cached places
+    private var cachedPlaces: [SavedPlace] = []
 
     private var currentUserID: String? {
         let uid = Auth.auth().currentUser?.uid
         print("ℹ️ Current user ID: \(uid ?? "nil")")
         return uid
+    }
+
+    // Add method to clear cached data
+    func clearCachedData() {
+        print("🧹 Clearing cached places data")
+        cachedPlaces = []
     }
 
     private func frequentPlacesCollectionRef() -> CollectionReference? {
@@ -59,18 +68,28 @@ class SavedPlacesManager {
 
     /// 从 Firestore 加载常用地点列表
     func loadPlaces(completion: @escaping (Result<[SavedPlace], Error>) -> Void) {
+        // If we have cached places and a valid user ID, return them immediately
+        if !cachedPlaces.isEmpty, currentUserID != nil {
+            print("📦 Returning \(cachedPlaces.count) cached places")
+            completion(.success(cachedPlaces))
+            return
+        }
+
         guard let collectionRef = frequentPlacesCollectionRef() else {
             print("ℹ️ No current user ID, returning default placeholders for Home/Work.")
             let defaultPlaceholders = [
                 SavedPlace(placeholderName: "Home", isSystemDefault: true),
                 SavedPlace(placeholderName: "Work", isSystemDefault: true)
             ]
+            cachedPlaces = defaultPlaceholders
             completion(.success(defaultPlaceholders))
             return
         }
 
         print("📥 Loading places from Firestore...")
-        collectionRef.getDocuments { (querySnapshot, error) in
+        collectionRef.getDocuments { [weak self] (querySnapshot, error) in
+            guard let self = self else { return }
+            
             if let error = error {
                 print("🛑 Error getting documents from Firestore: \(error.localizedDescription)")
                 completion(.failure(error))
@@ -111,6 +130,9 @@ class SavedPlacesManager {
                 places.insert(workPlaceholder, at: insertAtIndex)
             }
 
+            // Cache the places
+            self.cachedPlaces = places
+            
             print("✅ Loaded \(places.count) places total")
             completion(.success(places))
         }
@@ -129,11 +151,19 @@ class SavedPlacesManager {
         print("📝 Saving place '\(place.name)' (ID: \(place.id)) to Firestore...")
         
         do {
-            try documentRef.setData(from: place, merge: true) { error in
+            try documentRef.setData(from: place, merge: true) { [weak self] error in
+                guard let self = self else { return }
+                
                 if let error = error {
                     print("🛑 Error writing document \(place.id.uuidString) (\(place.name)) to Firestore: \(error.localizedDescription)")
                 } else {
                     print("✅ Document \(place.id.uuidString) (\(place.name)) successfully written/updated in Firestore!")
+                    // Update cached places
+                    if let index = self.cachedPlaces.firstIndex(where: { $0.id == place.id }) {
+                        self.cachedPlaces[index] = place
+                    } else {
+                        self.cachedPlaces.append(place)
+                    }
                 }
                 completion(error)
             }
@@ -164,11 +194,15 @@ class SavedPlacesManager {
                                          isSystemDefault: true)
             addOrUpdatePlace(placeholder, completion: completion)
         } else {
-            documentRef.delete { error in
+            documentRef.delete { [weak self] error in
+                guard let self = self else { return }
+                
                 if let error = error {
                     print("🛑 Error removing document \(id.uuidString) from Firestore: \(error.localizedDescription)")
                 } else {
                     print("✅ Document \(id.uuidString) successfully removed from Firestore!")
+                    // Remove from cached places
+                    self.cachedPlaces.removeAll { $0.id == id }
                 }
                 completion(error)
             }

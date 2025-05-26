@@ -3,6 +3,7 @@ import GoogleMaps
 import GooglePlaces
 import CoreLocation
 import FirebaseFirestore
+import FirebaseAuth
 
 // Define some modern colors (you can customize these further)
 struct AppColors {
@@ -18,8 +19,7 @@ struct AppColors {
     static let areaBlockText = UIColor(red: 42/255, green: 95/255, blue: 176/255, alpha: 1)
 }
 
-// Assume AppColors, UserProfile, SavedPlace, SavedPlacesManager, APIKeys are globally accessible
-// or defined in their respective files and imported.
+
 
 class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate {
 
@@ -45,7 +45,6 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     var userProfile: UserProfile?
     private var welcomeMessageLabel: UILabel!
  
-    
     // To keep track of which frequent place (especially "Home" or "Work" placeholders)
     // is being set or edited via the GMSAutocompleteViewController.
     // This stores the name of the placeholder ("Home" or "Work") if one of those is tapped.
@@ -96,15 +95,35 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         super.viewDidLoad()
         view.backgroundColor = AppColors.background
         
-        // 1. Load initial data (frequent places) - this is now asynchronous
-        // The UI setup will be called in the completion of data loading.
+        // Setup location manager first
+        setupLocationManager()
+        
+        // Setup UI components
+        setupScrollView()
+        setupContentStack()
+        setupGreetingAndLogo()
+        setupMapViewCard()
+        setupSearchCard()
+        setupStartTripButton()
+        setupFrequentPlacesSection()
+        setupNearAttractionsSection()
+        
+        // Load initial data (frequent places) - this is now asynchronous
         loadFrequentPlacesDataAndSetupInitialUI()
         
-        // 2. Setup non-data-dependent services
-        setupLocationManager()
         setupKeyboardNotifications()
-    
+        
         navigationController?.isNavigationBarHidden = true
+        
+        // Set isUILayoutComplete to true after all UI setup is done
+        isUILayoutComplete = true
+        
+        // Start location updates if authorized
+        if locationManager.authorizationStatus == .authorizedWhenInUse || 
+           locationManager.authorizationStatus == .authorizedAlways {
+            print("✅ UI setup complete. Starting location updates now.")
+            locationManager.startUpdatingLocation()
+        }
     }
     
     override func viewWillAppear(_ animated: Bool) {
@@ -135,19 +154,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                     ]
                 }
                 
-                // Setup UI components that depend on this data or general layout
-                // This check prevents re-running setup if called multiple times (e.g. from viewWillAppear too early)
-                if self.scrollView.superview == nil {
-                    self.setupScrollView()
-                    self.setupContentStack()
-                    self.setupGreetingAndLogo()
-                    self.setupMapViewCard()
-                    self.setupSearchCard()
-                    self.setupStartTripButton()
- 
-                    self.setupFrequentPlacesSection() // Sets up the scroll view and stack structure
-                    self.setupNearAttractionsSection()   // Sets up the scroll view and stack structure
-                }
+    
                 self.populateFrequentPlacesCards() // Populate the cards with loaded/default data
                 
                 self.isUILayoutComplete = true
@@ -208,6 +215,21 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        
+        // Add sign out button with improved styling
+        let signOutButton = UIButton(type: .system)
+        signOutButton.setImage(UIImage(systemName: "person.crop.circle.badge.minus"), for: .normal)
+        signOutButton.tintColor = AppColors.accentBlue
+        signOutButton.addTarget(self, action: #selector(signOutTapped), for: .touchUpInside)
+        signOutButton.translatesAutoresizingMaskIntoConstraints = false
+        
+        view.addSubview(signOutButton)
+        NSLayoutConstraint.activate([
+            signOutButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            signOutButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            signOutButton.widthAnchor.constraint(equalToConstant: 44),
+            signOutButton.heightAnchor.constraint(equalToConstant: 44)
         ])
     }
 
@@ -703,71 +725,50 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private func setupLocationManager() {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        locationManager.distanceFilter = 50 
+        locationManager.distanceFilter = 50
         locationManager.requestWhenInUseAuthorization()
     }
 
-
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        // 首先尝试获取 location，因为两个分支都可能需要它
         guard let lastReceivedLocation = locations.last else {
             print("⚠️ locationManager didUpdateLocations: locations array was empty.")
-            return // 如果 locations 数组为空，则直接返回
-        }
-
-        // 然后检查 UI 布局是否完成
-        guard self.isUILayoutComplete else {
-            // UI 尚未完成，但我们有 lastReceivedLocation
-            print("⚠️ locationManager didUpdateLocations: UI layout not yet complete. Buffering location.")
-            // 使用上面获取的 lastReceivedLocation 来更新 currentLocation
-            self.currentLocation = lastReceivedLocation.coordinate
-            
-            // 可以在这里考虑，如果 isUILayoutComplete 稍后变为 true，
-            // 是否需要基于这个已缓冲的 currentLocation 立即触发一次 displayAttractions。
-            // 这通常通过在 isUILayoutComplete 变为 true 的地方检查 currentLocation 是否已有值来实现。
             return
         }
 
-        // ---- 如果代码执行到这里，意味着 isUILayoutComplete 为 true 并且 lastReceivedLocation (现在重命名为 location) 有值 ----
-        let location = lastReceivedLocation // 现在可以安全使用 location
-        let newCoordinate = location.coordinate
-        let isFirstMeaningfulUpdate = (currentLocation == nil ||
-                                      (currentLocation!.latitude != newCoordinate.latitude || currentLocation!.longitude != newCoordinate.longitude))
-
-
+        let newCoordinate = lastReceivedLocation.coordinate
+        
+        // Update current location immediately
+        currentLocation = newCoordinate
+        
+        // Update start text field if needed
         if let startTF = self.startTextField {
             if startTF.text?.isEmpty ?? true || startTF.text?.lowercased() == "current location" {
                 startTF.text = "Current Location"
             }
-        } else {
-            print("⚠️ locationManager didUpdateLocations: startTextField was nil when trying to update its text (even after UI complete check).")
         }
 
-        currentLocation = newCoordinate
+        // Only proceed with map updates if UI is ready
+        guard isUILayoutComplete else {
+            print("⚠️ locationManager didUpdateLocations: UI layout not yet complete. Buffering location.")
+            return
+        }
 
-        if isFirstMeaningfulUpdate {
-            print("ℹ️ Meaningful location update (or first after UI ready): \(newCoordinate)")
-            if let mapView = self.mapView {
-                // 只有在地图的当前目标是 (0,0) 这个默认值时才移动相机到当前位置，
-                // 或者您可以有其他逻辑来决定何时自动移动相机。
-                if mapView.camera.target.latitude == 0 && mapView.camera.target.longitude == 0 {
-                    mapView.camera = GMSCameraPosition.camera(withTarget: newCoordinate, zoom: 14)
-                }
+        // Update map view if needed
+        if let mapView = self.mapView {
+            if mapView.camera.target.latitude == 0 && mapView.camera.target.longitude == 0 {
+                print("ℹ️ Setting initial map position to: \(newCoordinate)")
+                mapView.camera = GMSCameraPosition.camera(withTarget: newCoordinate, zoom: 14)
                 mapView.isMyLocationEnabled = true
-            } else {
-                print("⚠️ locationManager didUpdateLocations: mapView was nil.")
+                displayAttractions()
             }
-            displayAttractions()
         }
-        
+
+        // Update area name
         fetchCurrentAreaName(from: newCoordinate) { [weak self] area in
             DispatchQueue.main.async { self?.updateAreaBlock(area) }
         }
-        
-        // locationManager.stopUpdatingLocation() // Consider when to stop
     }
 
-    
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("🛑 Location manager failed with error: \(error.localizedDescription)")
         areaLabel?.text = "Area unknown (Error)"
@@ -1253,6 +1254,56 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     
     @objc private func dismissKeyboard() {
         view.endEditing(true)
+    }
+
+    // MARK: - Sign Out
+    @objc private func signOutTapped() {
+        let alert = UIAlertController(
+            title: "Sign Out",
+            message: "Are you sure you want to sign out?",
+            preferredStyle: .actionSheet
+        )
+        
+        alert.addAction(UIAlertAction(title: "Sign Out", style: .destructive) { [weak self] _ in
+            self?.performSignOut()
+        })
+        
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        
+        // For iPad support
+        if let popoverController = alert.popoverPresentationController {
+            popoverController.sourceView = view
+            popoverController.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
+            popoverController.permittedArrowDirections = []
+        }
+        
+        present(alert, animated: true)
+    }
+    
+    private func performSignOut() {
+        do {
+            try Auth.auth().signOut()
+            print("✅ User signed out successfully")
+            
+            // Clear any cached data
+            SavedPlacesManager.shared.clearCachedData()
+            
+            // Present login view controller
+            let loginVC = LoginViewController()
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = windowScene.windows.first {
+                window.rootViewController = UINavigationController(rootViewController: loginVC)
+                window.makeKeyAndVisible()
+                UIView.transition(with: window,
+                                duration: 0.3,
+                                options: .transitionCrossDissolve,
+                                animations: nil,
+                                completion: nil)
+            }
+        } catch {
+            print("❌ Error signing out: \(error.localizedDescription)")
+            showErrorAlert(message: "Failed to sign out. Please try again.")
+        }
     }
 }
 
