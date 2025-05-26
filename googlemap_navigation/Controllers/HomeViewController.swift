@@ -434,46 +434,15 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             ]
         ))
         greetingLabel.attributedText = greetingAttributedText
-        greetingLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        greetingLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        
-        // Store reference to welcome message label
-        welcomeMessageLabel = greetingLabel
 
-        // Logo ImageView
-        let logoImageView = UIImageView(image: UIImage(named: "ontimego_logo"))
-        logoImageView.contentMode = .scaleAspectFit
-        logoImageView.translatesAutoresizingMaskIntoConstraints = false
-
-        NSLayoutConstraint.activate([
-            logoImageView.widthAnchor.constraint(equalToConstant: 100),
-            logoImageView.heightAnchor.constraint(equalToConstant: 100)
-        ])
-        logoImageView.setContentHuggingPriority(.required, for: .horizontal)
-        logoImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        // Spacer View
-        let spacerView = UIView()
-        spacerView.translatesAutoresizingMaskIntoConstraints = false
-        spacerView.setContentHuggingPriority(.fittingSizeLevel, for: .horizontal)
-        spacerView.setContentCompressionResistancePriority(.fittingSizeLevel, for: .horizontal)
-
-        
-
-        // Horizontal Stack for Greeting and Logo
-        let greetingLogoStack = UIStackView(arrangedSubviews: [greetingLabel, logoImageView])
-        greetingLogoStack.axis = .horizontal
-        greetingLogoStack.alignment = .fill // Aligns items vertically center
-        greetingLogoStack.spacing = 12 // Space between greeting text and logo
-
-        // Area Block (as a small chip/tag)
+        // Area Block
         let areaBlock = UIView()
         areaBlock.backgroundColor = AppColors.areaBlockBackground
         areaBlock.layer.cornerRadius = 12
         areaBlock.layer.masksToBounds = true
         areaBlock.translatesAutoresizingMaskIntoConstraints = false
 
-        areaLabel = UILabel()
+        let areaLabel = UILabel()
         areaLabel.text = area
         areaLabel.font = .systemFont(ofSize: 12, weight: .medium)
         areaLabel.textColor = AppColors.areaBlockText
@@ -488,15 +457,29 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             areaLabel.bottomAnchor.constraint(equalTo: areaBlock.bottomAnchor, constant: -6)
         ])
         areaBlock.setContentHuggingPriority(.required, for: .horizontal)
-        areaBlock.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        // Main Vertical Stack for the entire header section
-        let mainHeaderStack = UIStackView(arrangedSubviews: [greetingLogoStack, areaBlock])
-        mainHeaderStack.axis = .vertical
-        mainHeaderStack.alignment = .fill // Align areaBlock to the leading edge of the greeting/logo
-        mainHeaderStack.spacing = 8 // Space between greeting/logo row and area block
+        // Left side vertical stack: greeting + area
+        let leftStack = UIStackView(arrangedSubviews: [greetingLabel, areaBlock])
+        leftStack.axis = .vertical
+        leftStack.alignment = .leading
+        leftStack.spacing = 5
+
+        // Logo (right)
+        let logoImageView = UIImageView(image: UIImage(named: "ontimego_logo"))
+        logoImageView.contentMode = .scaleAspectFit
+        logoImageView.translatesAutoresizingMaskIntoConstraints = false
+        logoImageView.setContentHuggingPriority(.required, for: .horizontal)
+        logoImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         
-        return mainHeaderStack
+        logoImageView.widthAnchor.constraint(lessThanOrEqualToConstant: 120).isActive = true
+        logoImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 120).isActive = true
+
+        // Horizontal stack: left (greeting+area) + right (logo)
+        let mainStack = UIStackView(arrangedSubviews: [leftStack, logoImageView])
+        mainStack.axis = .horizontal
+        mainStack.alignment = .center // Center vertically
+
+        return mainStack
     }
     // MARK: - Frequent Places UI & Logic
     private func populateFrequentPlacesCards() {
