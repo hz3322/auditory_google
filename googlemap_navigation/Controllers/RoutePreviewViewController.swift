@@ -131,12 +131,22 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
         let camera = GMSCameraPosition.camera(withLatitude: 51.5074, longitude: -0.1278, zoom: 12) // Default London
         let options = GMSMapViewOptions()
         options.camera = camera
-        options.frame = .zero
+        options.frame = view.bounds
 
+        mapView = GMSMapView(options: options)
         mapView.delegate = self
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     
         view.addSubview(mapView)
+        
+        // Add constraints to make mapView fill the entire view
+        mapView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            mapView.topAnchor.constraint(equalTo: view.topAnchor),
+            mapView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            mapView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            mapView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
     }
 
     // MARK: - UI Setup

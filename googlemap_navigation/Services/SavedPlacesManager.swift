@@ -41,45 +41,35 @@ class SavedPlacesManager {
     static let shared = SavedPlacesManager()
     private let db = Firestore.firestore()
 
-    //  Firebase Authentication:
     private var currentUserID: String? {
-        if let existingID = UserDefaults.standard.string(forKey: "deviceAnonymousUserID_Firestore") { 
-                return existingID
-            } else {
-                let newID = UUID().uuidString
-                UserDefaults.standard.set(newID, forKey: "deviceAnonymousUserID_Firestore")
-                print("ℹ️ Generated new deviceAnonymousUserID for Firestore: \(newID)")
-                return newID
-            }
-//        return Auth.auth().currentUser?.uid
+        let uid = Auth.auth().currentUser?.uid
+        print("ℹ️ Current user ID: \(uid ?? "nil")")
+        return uid
     }
 
-
-   
-    // 获取用户常用地点集合的引用
     private func frequentPlacesCollectionRef() -> CollectionReference? {
         guard let userID = currentUserID else {
             print("🛑 Error: User ID not available. Cannot access frequent places in Firestore.")
             return nil
         }
-        // 结构: users/{userID}/frequent_places/{placeID}
-        return db.collection("users").document(userID).collection("frequent_places")
+        let collectionRef = db.collection("users").document(userID).collection("frequent_places")
+        print("ℹ️ Accessing Firestore collection: users/\(userID)/frequent_places")
+        return collectionRef
     }
 
     /// 从 Firestore 加载常用地点列表
     func loadPlaces(completion: @escaping (Result<[SavedPlace], Error>) -> Void) {
         guard let collectionRef = frequentPlacesCollectionRef() else {
-            // 如果没有用户ID，或者不希望在无用户时创建默认值，可以返回错误或空数组
-            // 为了保持与 UserDefaults 版本的行为一致，我们返回默认的 Home 和 Work 占位符
+            print("ℹ️ No current user ID, returning default placeholders for Home/Work.")
             let defaultPlaceholders = [
                 SavedPlace(placeholderName: "Home", isSystemDefault: true),
                 SavedPlace(placeholderName: "Work", isSystemDefault: true)
             ]
-            print("ℹ️ No current user ID, returning default placeholders for Home/Work.")
             completion(.success(defaultPlaceholders))
             return
         }
 
+        print("📥 Loading places from Firestore...")
         collectionRef.getDocuments { (querySnapshot, error) in
             if let error = error {
                 print("🛑 Error getting documents from Firestore: \(error.localizedDescription)")
@@ -87,19 +77,19 @@ class SavedPlacesManager {
                 return
             }
 
+            print("📦 Retrieved \(querySnapshot?.documents.count ?? 0) documents from Firestore")
             var places = querySnapshot?.documents.compactMap { document -> SavedPlace? in
-                // 尝试将 Firestore 文档解码为 SavedPlace 对象
-                // 如果解码失败，会打印错误并返回 nil，然后被 compactMap 过滤掉
                 do {
-                    return try document.data(as: SavedPlace.self)
+                    let place = try document.data(as: SavedPlace.self)
+                    print("✅ Successfully decoded place: \(place.name) (ID: \(place.id))")
+                    return place
                 } catch {
                     print("🛑 Error decoding SavedPlace from document \(document.documentID): \(error.localizedDescription)")
                     return nil
                 }
             } ?? []
 
-            // 确保 Home 和 Work (作为系统默认地点) 存在于列表中
-            // 如果 Firestore 中没有，则添加占位符
+            // 确保 Home 和 Work 存在于列表中
             var foundHome = false
             var foundWork = false
 
@@ -108,39 +98,20 @@ class SavedPlacesManager {
                 if place.name == "Work" && place.isSystemDefault { foundWork = true }
             }
 
-
             if !foundHome {
+                print("ℹ️ Adding Home placeholder")
                 let homePlaceholder = SavedPlace(placeholderName: "Home", isSystemDefault: true)
                 places.insert(homePlaceholder, at: 0)
-                // 如果添加了占位符，理论上应该立即将其保存到Firestore，以便下次加载时存在
-                // 或者，让用户在点击“Tap to set”后才真正创建Firestore文档
-                // 为简单起见，这里我们先在内存中添加，用户设置时会通过 addOrUpdatePlace 保存
-                print("ℹ️ 'Home' placeholder added to local list as it was missing.")
             }
             if !foundWork {
+                print("ℹ️ Adding Work placeholder")
                 let workPlaceholder = SavedPlace(placeholderName: "Work", isSystemDefault: true)
                 let homeIndex = places.firstIndex(where: { $0.name == "Home" && $0.isSystemDefault })
                 let insertAtIndex = homeIndex != nil ? homeIndex! + 1 : (places.isEmpty ? 0 : min(1, places.count))
-                
-                // 避免在已存在 Work 的情况下重复插入占位符
-                if !places.contains(where: {$0.name == "Work" && $0.isSystemDefault}) {
-                    places.insert(workPlaceholder, at: insertAtIndex)
-                    print("ℹ️ 'Work' placeholder added to local list as it was missing.")
-                }
+                places.insert(workPlaceholder, at: insertAtIndex)
             }
 
-            // 排序，确保 Home 和 Work 在最前面 (如果存在)
-            places.sort { (p1, p2) -> Bool in
-                if p1.isSystemDefault && !p2.isSystemDefault { return true }
-                if !p1.isSystemDefault && p2.isSystemDefault { return false }
-                if p1.name == "Home" { return true } // Home always first among defaults
-                if p2.name == "Home" { return false }
-                if p1.name == "Work" { return true } // Work second among defaults
-                if p2.name == "Work" { return false }
-                return p1.name.lowercased() < p2.name.lowercased() // Alphabetical for others
-            }
-            
-            print("✅ Frequent places loaded successfully from Firestore. Count: \(places.count)")
+            print("✅ Loaded \(places.count) places total")
             completion(.success(places))
         }
     }
@@ -154,19 +125,17 @@ class SavedPlacesManager {
             return
         }
         
-        // 使用 SavedPlace 的 id 作为 Firestore 文档的 ID
         let documentRef = collectionRef.document(place.id.uuidString)
+        print("📝 Saving place '\(place.name)' (ID: \(place.id)) to Firestore...")
         
         do {
-            // 将 SavedPlace 对象编码并写入 Firestore
-            // setData(from: place, merge: true) 会创建新文档或合并更新现有文档
             try documentRef.setData(from: place, merge: true) { error in
                 if let error = error {
                     print("🛑 Error writing document \(place.id.uuidString) (\(place.name)) to Firestore: \(error.localizedDescription)")
                 } else {
                     print("✅ Document \(place.id.uuidString) (\(place.name)) successfully written/updated in Firestore!")
                 }
-                completion(error) // 将 Firestore 的错误（或nil）传递回去
+                completion(error)
             }
         } catch {
             print("🛑 Error encoding SavedPlace '\(place.name)' for Firestore: \(error.localizedDescription)")
@@ -174,8 +143,7 @@ class SavedPlacesManager {
         }
     }
 
-    /// 从 Firestore 删除一个自定义的常用地点（通过ID）
-    /// 系统默认的 Home/Work 会被重置为占位符，而不是直接删除文档（除非您希望彻底删除）
+    /// 从 Firestore 删除一个自定义的常用地点
     func removePlace(withId id: UUID, isSystemDefault: Bool, defaultName: String, completion: @escaping (Error?) -> Void) {
         guard let collectionRef = frequentPlacesCollectionRef() else {
             let error = NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated or available."])
@@ -185,19 +153,17 @@ class SavedPlacesManager {
         }
 
         let documentRef = collectionRef.document(id.uuidString)
+        print("🗑️ Removing place with ID: \(id) from Firestore...")
 
         if isSystemDefault {
-            // 对于系统默认地点 (Home/Work)，我们不删除文档，而是将其内容重置为占位符状态
-            // 这需要确保占位符的 ID 与之前设置的 Home/Work 的 ID 相同
-            print("ℹ️ Resetting system default place '\(defaultName)' to placeholder state.")
+            print("ℹ️ Resetting system default place '\(defaultName)' to placeholder state")
             let placeholder = SavedPlace(id: id,
                                          name: defaultName,
-                                         address: "Tap to set \(defaultName)", // 占位符地址
-                                         coordinate: CLLocationCoordinate2D(latitude: 0, longitude: 0), // 占位符坐标
+                                         address: "Tap to set \(defaultName)",
+                                         coordinate: CLLocationCoordinate2D(latitude: 0, longitude: 0),
                                          isSystemDefault: true)
-            addOrUpdatePlace(placeholder, completion: completion) // 使用 addOrUpdatePlace 来覆盖
+            addOrUpdatePlace(placeholder, completion: completion)
         } else {
-            // 对于自定义地点，直接删除文档
             documentRef.delete { error in
                 if let error = error {
                     print("🛑 Error removing document \(id.uuidString) from Firestore: \(error.localizedDescription)")
