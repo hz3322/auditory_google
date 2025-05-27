@@ -3,17 +3,14 @@ import UIKit
 import CoreLocation
 
 protocol JourneyProgressDelegate: AnyObject {
-    /// Called whenever journey progress updates. Used to drive the UI animation and status.
     func journeyProgressDidUpdate(
         overallProgress: Double,
         phaseProgress: Double,
-        canCatch: Bool,
-        delta: TimeInterval,
+        currentCatchStatus: CatchStatus, // MODIFIED: Replaces canCatch
+        delta: TimeInterval,             // Time until train_arrival_at_platform
         uncertainty: TimeInterval,
         phase: ProgressPhase
     )
-
-    /// Optional: called when the journey phase changes (for animations, color, etc)
     func journeyPhaseDidChange(_ phase: ProgressPhase)
 }
 
@@ -43,6 +40,12 @@ class JourneyProgressService {
     private var timer: CADisplayLink?
     private var startTime: Date = Date()
     private var uncertainty: Double = 20
+    
+    // bufferTime = (Train Arrival Time) - (Time NOW) - (Predicted Time To Reach Platform From Current Location)
+    private let easyThresholdDynamic: TimeInterval = 90
+    private let hurryThresholdDynamic: TimeInterval = 20
+    private let toughThresholdDynamic: TimeInterval = -30 // User can be up to 30s "late" to platform for a TOUGH status
+    
 
     // --- Phase switching ---
     private var lastPhase: ProgressPhase = .walkToStation
@@ -55,6 +58,20 @@ class JourneyProgressService {
         self.originLocation = originLocation
         self.stationLocation = stationLocation
     }
+    
+
+    private func determineDynamicCatchStatus(bufferTime: TimeInterval) -> CatchStatus {
+        if bufferTime > easyThresholdDynamic {
+            return .easy
+        } else if bufferTime > hurryThresholdDynamic {
+            return .hurry
+        } else if bufferTime > toughThresholdDynamic {
+            return .tough
+        } else {
+            return .missed
+        }
+    }
+    
 
     func start() {
         startTime = Date()
@@ -81,15 +98,13 @@ class JourneyProgressService {
 
         // ---- PHASE LOGIC ----
         if phase == .walkToStation {
-            // Wait for location-driven updates (see below)
             // Just keep showing current progress (or 0)
         } else if phase == .stationToPlatform {
             let phaseStart = walkToStationSec
-//            let phaseEnd = phaseStart + stationToPlatformSec
             let progressInPhase = min(1.0, max(0, (elapsed - phaseStart) / stationToPlatformSec))
             phaseProgress = progressInPhase
             progress = min(1.0, max(0, (elapsed / totalTime)))
-            notifyDelegate(phase: .stationToPlatform, phaseProgress: progressInPhase, canCatch: canCatch, delta: delta)
+            notifyDelegate(phaseOverride: .stationToPlatform, phaseProgressOverride: progressInPhase) // Status calculated inside
             if progressInPhase >= 1.0 && !transferTimesSec.isEmpty {
                 switchToPhase(.transferWalk(index: 0))
             } else if progressInPhase >= 1.0 {
@@ -101,7 +116,7 @@ class JourneyProgressService {
             let progressInPhase = min(1.0, max(0, (elapsed - prevTime) / phaseTime))
             phaseProgress = progressInPhase
             progress = min(1.0, max(0, (elapsed / totalTime)))
-            notifyDelegate(phase: .transferWalk(index: idx), phaseProgress: progressInPhase, canCatch: canCatch, delta: delta)
+            notifyDelegate(phaseOverride: .transferWalk(index: idx), phaseProgressOverride: progressInPhase)
             if progressInPhase >= 1.0 {
                 if idx + 1 < transferTimesSec.count {
                     switchToPhase(.transferWalk(index: idx + 1))
@@ -112,44 +127,106 @@ class JourneyProgressService {
         } else if phase == .finished {
             phaseProgress = 1
             progress = 1
-            notifyDelegate(phase: .finished, phaseProgress: 1, canCatch: canCatch, delta: delta)
+            notifyDelegate(phaseOverride: .finished, phaseProgressOverride: 1, explicitCatchStatus: .missed)
             stop()
         }
     }
 
     // ---- For GPS updates (walkToStation phase only) ----
+    // In updateProgressWithLocation(currentLocation: CLLocation)
     func updateProgressWithLocation(currentLocation: CLLocation) {
         guard phase == .walkToStation, let origin = originLocation, let station = stationLocation else { return }
-        let totalDistance = origin.distance(from: station)
-        let distanceLeft = currentLocation.distance(from: station)
-        let walkProgress = max(0, min(1, 1 - (distanceLeft / totalDistance)))
+
+        let totalDistanceToStation = origin.distance(from: station)
+        guard totalDistanceToStation > 0 else { // Avoid division by zero
+            // User is likely at the station or origin is same as station
+            if phase == .walkToStation { switchToPhase(.stationToPlatform) }
+            return
+        }
+        let distanceUserToStation = currentLocation.distance(from: station)
+
+        // Calculate current predicted walk time based on remaining distance and a speed estimate
+        // This is a simplified speed estimate. You might want a rolling average from GPS.
+        let assumedWalkingSpeed: Double = 1.2 // m/s (average, adjust as needed)
+        let remainingPredictedWalkTime = distanceUserToStation / assumedWalkingSpeed
+
+        // Overall progress for this phase (walkToStation)
+        let walkProgress = max(0, min(1, 1 - (distanceUserToStation / totalDistanceToStation)))
         self.phaseProgress = walkProgress
-        self.progress = walkProgress * (walkToStationSec / (walkToStationSec + stationToPlatformSec + transferTimesSec.reduce(0, +)))
-        let delta = trainArrival.timeIntervalSince(Date())
-        notifyDelegate(phase: .walkToStation, phaseProgress: walkProgress, canCatch: true, delta: delta)
-        if distanceLeft < 10 { // User arrived at station entrance
+
+        // Update overall journey progress (simplified, assumes walkToStation is first part)
+        let totalJourneyTimeEstimate = self.walkToStationSec + self.stationToPlatformSec + self.transferTimesSec.reduce(0, +)
+        if totalJourneyTimeEstimate > 0 {
+             self.progress = (self.walkToStationSec * walkProgress) / totalJourneyTimeEstimate
+        } else {
+             self.progress = 0
+        }
+
+        // Calculate dynamic catch status
+        let predictedTimeToReachPlatformFromCurrent = remainingPredictedWalkTime + self.stationToPlatformSec
+        let timeUntilTrainArrival = trainArrival.timeIntervalSince(Date())
+        let bufferTime = timeUntilTrainArrival - predictedTimeToReachPlatformFromCurrent
+        let dynamicStatus = determineDynamicCatchStatus(bufferTime: bufferTime)
+
+        notifyDelegate(phaseOverride: .walkToStation, phaseProgressOverride: walkProgress, explicitCatchStatus: dynamicStatus)
+
+        // Threshold for arriving at station (e.g., within 10-20 meters)
+        if distanceUserToStation < 20 {
             switchToPhase(.stationToPlatform)
         }
     }
+    
 
-    // ---- Helper: Notify delegate with all values
-    private func notifyDelegate(phase: ProgressPhase? = nil, phaseProgress: Double? = nil, canCatch: Bool = true, delta: TimeInterval = 0) {
-        let ph = phase ?? self.phase
-        let pp = phaseProgress ?? self.phaseProgress
+    private func notifyDelegate(
+        phaseOverride: ProgressPhase? = nil,
+        phaseProgressOverride: Double? = nil,
+        explicitCatchStatus: CatchStatus? = nil
+    ) {
+        let currentPhase = phaseOverride ?? self.phase
+        let currentPhaseProgress = phaseProgressOverride ?? self.phaseProgress
+        let timeUntilTrainArrival = trainArrival.timeIntervalSince(Date()) // Live delta
+
+        var currentCatchStatus: CatchStatus
+        if let explicitStatus = explicitCatchStatus {
+            currentCatchStatus = explicitStatus
+        } else {
+            // --- DYNAMIC STATUS CALCULATION ---
+            // This is where you need your service's best guess of time to reach platform
+            var predictedTimeToReachPlatform: Double
+            if currentPhase == .walkToStation {
+                // This needs dynamic calculation based on current location and speed
+                // For now, a simplified version: assume remaining portion of initial walk time + fixed platform time
+                let remainingWalkProportion = 1.0 - self.phaseProgress // phaseProgress for walkToStation is 0-1
+                predictedTimeToReachPlatform = (remainingWalkProportion * self.walkToStationSec) + self.stationToPlatformSec
+            } else if currentPhase == .stationToPlatform {
+                let remainingPlatformProportion = 1.0 - self.phaseProgress
+                predictedTimeToReachPlatform = remainingPlatformProportion * self.stationToPlatformSec
+            } else { // For transfer walks or other phases, adapt logic
+                // Fallback to a static pessimistic estimate or handle based on phase
+                predictedTimeToReachPlatform = self.walkToStationSec + self.stationToPlatformSec // Placeholder for other phases
+            }
+             // Ensure predictedTimeToReachPlatform doesn't go negative if phaseProgress > 1 due to timing
+            predictedTimeToReachPlatform = max(0, predictedTimeToReachPlatform)
+
+            let bufferTime = timeUntilTrainArrival - predictedTimeToReachPlatform
+            currentCatchStatus = determineDynamicCatchStatus(bufferTime: bufferTime)
+        }
+
         delegate?.journeyProgressDidUpdate(
-            overallProgress: self.progress,
-            phaseProgress: pp,
-            canCatch: canCatch,
-            delta: delta,
+            overallProgress: self.progress, // Ensure self.progress is correctly updated for overall journey
+            phaseProgress: currentPhaseProgress,
+            currentCatchStatus: currentCatchStatus, // PASS THE CALCULATED STATUS
+            delta: timeUntilTrainArrival,         // Pass the live delta
             uncertainty: self.uncertainty,
-            phase: ph
+            phase: currentPhase
         )
-        // Only call this if phase changed
-        if ph != lastPhase {
-            delegate?.journeyPhaseDidChange(ph)
-            lastPhase = ph
+
+        if currentPhase != lastPhase {
+            delegate?.journeyPhaseDidChange(currentPhase)
+            lastPhase = currentPhase
         }
     }
+    
 
     // ---- Phase switching
     private func switchToPhase(_ newPhase: ProgressPhase) {

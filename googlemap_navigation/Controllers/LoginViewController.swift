@@ -328,17 +328,17 @@ class LoginViewController: UIViewController {
             window.rootViewController = UINavigationController(rootViewController: homeVC)
             window.makeKeyAndVisible()
             UIView.transition(with: window,
-                            duration: 0.3,
-                            options: .transitionCrossDissolve,
-                            animations: nil,
-                            completion: nil)
+                              duration: 0.3,
+                              options: .transitionCrossDissolve,
+                              animations: nil,
+                              completion: nil)
         }
     }
     
     private func showAlert(title: String, message: String) {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
-        present(alert, animated: true)
+            present(alert, animated: true)
     }
 }
 

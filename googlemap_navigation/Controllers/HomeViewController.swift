@@ -79,7 +79,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         button.alpha = 0.5      // Visual cue for disabled state
         return button
     }()
-
+    
     // MARK: - Autocomplete Tags Enum
     // Tags to differentiate the purpose of GMSAutocompleteViewController presentation
     private enum GMSAutocompleteTag: Int {
@@ -411,7 +411,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         let label = UILabel()
         label.text = text
         label.font = .systemFont(ofSize: 20, weight: .bold)
-        label.textColor = AppColors.primaryText
+        label.textColor = .black
         return label
     }
     
@@ -434,6 +434,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             ]
         ))
         greetingLabel.attributedText = greetingAttributedText
+        
+        // Store reference to welcome message label
+        welcomeMessageLabel = greetingLabel
 
         // Area Block
         let areaBlock = UIView()
@@ -442,7 +445,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         areaBlock.layer.masksToBounds = true
         areaBlock.translatesAutoresizingMaskIntoConstraints = false
 
-        let areaLabel = UILabel()
+        // Use the class property areaLabel and initialize it here
+        areaLabel = UILabel() // Initialize the class property
         areaLabel.text = area
         areaLabel.font = .systemFont(ofSize: 12, weight: .medium)
         areaLabel.textColor = AppColors.areaBlockText
@@ -527,7 +531,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
 
     private func createFrequentPlaceCard(savedPlace: SavedPlace) -> UIView {
-        let card = createCardView() // Use common card style
+        let card = createCardView()
 
         let nameLabel = UILabel()
         nameLabel.text = savedPlace.name
@@ -538,7 +542,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         nameLabel.lineBreakMode = .byTruncatingTail
         
         let addressLabel = UILabel()
-        if savedPlace.isSystemDefault && savedPlace.address.starts(with: "Tap to set") { // Check if it's a placeholder
+        if savedPlace.isSystemDefault && savedPlace.address.starts(with: "Tap to set") {
             addressLabel.text = "Tap to set"
             addressLabel.textColor = AppColors.accentBlue // Highlight tappable placeholders
             addressLabel.font = UIFont.systemFont(ofSize: 11, weight: .regular)
@@ -608,14 +612,14 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         if tappedPlace.isSystemDefault && tappedPlace.address.starts(with: "Tap to set") {
             self.currentlySettingPlaceName = tappedPlace.name // Store "Home" or "Work"
             
-            let autocompleteController = GMSAutocompleteViewController()
-            autocompleteController.delegate = self
+        let autocompleteController = GMSAutocompleteViewController()
+        autocompleteController.delegate = self
             // Use specific tags for setting Home/Work based on the name of the placeholder
             autocompleteController.view.tag = (tappedPlace.name == "Home") ? GMSAutocompleteTag.setHome.rawValue : GMSAutocompleteTag.setWork.rawValue
-            
-            let filter = GMSAutocompleteFilter()
-            filter.countries = ["GB"]
-            autocompleteController.autocompleteFilter = filter
+        
+        let filter = GMSAutocompleteFilter()
+        filter.countries = ["GB"]
+        autocompleteController.autocompleteFilter = filter
             present(autocompleteController, animated: true, completion: nil)
         } else if !(tappedPlace.isSystemDefault && tappedPlace.address.starts(with: "Tap to set")) {
             // A configured place (either a set Home/Work or a custom place) was tapped
@@ -735,7 +739,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             print("⚠️ locationManager didUpdateLocations: UI layout not yet complete. Buffering location.")
             return
         }
-
+        
         // Update map view if needed
         if let mapView = self.mapView {
             if mapView.camera.target.latitude == 0 && mapView.camera.target.longitude == 0 {
@@ -781,12 +785,12 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
      private func displayAttractions() {
         guard self.isUILayoutComplete else { // **** 检查 isUILayoutComplete ****
              print("⚠️ displayAttractions: UI layout not complete. Aborting.")
-             return
-         }
-         
+                        return
+                    }
+                    
         guard let coord = currentLocation else {
             print("ℹ️ Cannot display attractions, current location is nil.")
-            DispatchQueue.main.async {
+                    DispatchQueue.main.async {
                 self.nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
                 let noLocationLabel = UILabel()
                 noLocationLabel.text = "Enable location to see nearby attractions."
@@ -799,9 +803,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
          guard self.nearAttractionsStack != nil else {
             print("🛑 displayAttractions: nearAttractionsStack is unexpectedly nil!")
-            return
-        }
-
+                return
+            }
+            
         nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         displayedPlaceNames.removeAll()
 
@@ -822,8 +826,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                         self.nearAttractionsStack.addArrangedSubview(noAttractionsLabel)
                     }
                 }
-                return
-            }
+                    return
+                }
             candidatesProcessed += 1
 
             self.fetchNearbyAttractionImage(coord: coord) { [weak self] image, name, placeCoord in
@@ -831,7 +835,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                 
                 if let img = image, let placeName = name, let placeCoordinate = placeCoord, !self.displayedPlaceNames.contains(placeName) {
                     self.displayedPlaceNames.insert(placeName)
-                    DispatchQueue.main.async {
+                DispatchQueue.main.async {
                         // Clear "no attractions" label if it exists
                         if let label = self.nearAttractionsStack.arrangedSubviews.first as? UILabel,
                            label.text == "No attractions found nearby." || label.text == "Enable location to see nearby attractions." {
@@ -1000,9 +1004,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     @objc private func startTripButtonTapped() {
         guard let destinationAddress = destinationTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines), !destinationAddress.isEmpty else {
             showErrorAlert(title: "Missing Destination", message: "Please enter a destination.")
-            return
-        }
-        
+                        return
+                    }
+                    
         let routePreviewVC = RoutePreviewViewController()
         let startAddressText = startTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines)
         
@@ -1080,7 +1084,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         autocompleteController.tableCellBackgroundColor = AppColors.cardBackground
         autocompleteController.tableCellSeparatorColor = AppColors.subtleGray
         autocompleteController.tintColor = AppColors.accentBlue
-
+        
         let filter = GMSAutocompleteFilter()
         filter.countries = ["GB"] // United Kingdom
         autocompleteController.autocompleteFilter = filter
@@ -1103,9 +1107,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         guard let tagValue = GMSAutocompleteTag(rawValue: tagRawValue) else {
             print("🛑 Unknown autocomplete tag raw value: \(tagRawValue)") // Print the raw value for debugging
             dismiss(animated: true, completion: nil)
-            return
-        }
-        
+                    return
+                }
+                
         // Proceed with the rest of your logic using tagValue
         let placeAddress = place.formattedAddress ?? place.name ?? "Selected Location"
         let placeCoordinate = place.coordinate
@@ -1151,7 +1155,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                 if let error = error {
                     print("🛑 Error saving frequent place '\(place.name)' to Firestore: \(error.localizedDescription)")
                     self.showErrorAlert(message: "Could not save \"\(place.name)\". Please try again.")
-                } else {
+                    } else {
                     print("✅ Frequent place '\(place.name)' saved to Firestore.")
                     self.refreshFrequentPlacesUI() // Refresh UI to show the new/updated place
                 }

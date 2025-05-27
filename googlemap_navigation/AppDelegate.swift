@@ -7,8 +7,7 @@ import FirebaseAuth
 
 struct APIKeys {
     static let googleMaps = "AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
-
-    // static let tflAppKey = "YOUR_TFL_APP_KEY"
+    static let tflAppKey = "0bc9522b0b77427eb20e858550d6a072"
 }
 
 @main
