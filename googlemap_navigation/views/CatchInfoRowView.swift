@@ -7,17 +7,13 @@ class CatchInfoRowView: UIView {
     private let statusLabel = UILabel()
     private let iconLabel = UILabel()
     
-    private var initialCatchInfo: CatchInfo
-    private var lineName: String
-    private var lineColorHex: String
+    private var info: CatchInfo
     private var refreshTimer: Timer?
     private let refreshInterval: TimeInterval = 5.0
     
     // MARK: - Initialization
-    init(info: CatchInfo, lineName: String, lineColorHex: String) {
-        self.initialCatchInfo = info
-        self.lineName = lineName
-        self.lineColorHex = lineColorHex
+    init(info: CatchInfo) {
+        self.info = info
         super.init(frame: .zero)
         setupUI()
         startRefreshTimer()
@@ -34,8 +30,8 @@ class CatchInfoRowView: UIView {
     // MARK: - UI Setup
     private func setupUI() {
         // Line Badge
-        let accentColor = UIColor(hex: lineColorHex)
-        lineBadgeLabel.text = lineName
+        let accentColor = UIColor(hex: info.lineColorHex)
+        lineBadgeLabel.text = info.lineName
         lineBadgeLabel.font = .systemFont(ofSize: 12, weight: .bold)
         lineBadgeLabel.textColor = accentColor.isLight ? .black.withAlphaComponent(0.8) : .white
         lineBadgeLabel.backgroundColor = accentColor
@@ -44,7 +40,7 @@ class CatchInfoRowView: UIView {
         lineBadgeLabel.textAlignment = .center
         
         // Arrival Time
-        arrivalTimeLabel.text = initialCatchInfo.expectedArrival
+        arrivalTimeLabel.text = info.expectedArrival
         arrivalTimeLabel.font = .systemFont(ofSize: 16, weight: .medium)
         arrivalTimeLabel.textColor = .label
         
@@ -75,23 +71,22 @@ class CatchInfoRowView: UIView {
             mainStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             mainStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             mainStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            
             lineBadgeLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 100),
             iconLabel.widthAnchor.constraint(equalToConstant: 24)
         ])
         
         // Initial UI update
-        updateUI(with: initialCatchInfo)
+        updateUI(with: info)
     }
     
     // MARK: - Timer Management
     private func startRefreshTimer() {
         stopRefreshTimer()
         refreshTimer = Timer.scheduledTimer(timeInterval: refreshInterval,
-                                          target: self,
-                                          selector: #selector(updateTimerFired),
-                                          userInfo: nil,
-                                          repeats: true)
+                                            target: self,
+                                            selector: #selector(updateTimerFired),
+                                            userInfo: nil,
+                                            repeats: true)
     }
     
     private func stopRefreshTimer() {
@@ -101,17 +96,23 @@ class CatchInfoRowView: UIView {
     
     @objc private func updateTimerFired() {
         let now = Date()
-        let newTimeLeft = initialCatchInfo.expectedArrivalDate.timeIntervalSince(now) - initialCatchInfo.timeToStation
+        let newTimeLeft = info.expectedArrivalDate.timeIntervalSince(now) - info.timeToStation
         let newStatus = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: newTimeLeft)
         
         let updatedInfo = CatchInfo(
-            timeToStation: initialCatchInfo.timeToStation,
-            expectedArrival: initialCatchInfo.expectedArrival,
-            expectedArrivalDate: initialCatchInfo.expectedArrivalDate,
+            lineName: info.lineName,
+            lineColorHex: info.lineColorHex,
+            fromStation: info.fromStation,
+            toStation: info.toStation,
+            stops: info.stops,
+            expectedArrival: info.expectedArrival,
+            expectedArrivalDate: info.expectedArrivalDate,
+            timeToStation: info.timeToStation,
             timeLeftToCatch: newTimeLeft,
             catchStatus: newStatus
         )
         
+        // 刷新UI
         updateUI(with: updatedInfo)
         
         // Stop timer if train is definitely missed

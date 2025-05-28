@@ -9,7 +9,6 @@ struct TfLArrivalPrediction {
     let destinationName: String?
     let expectedArrival: Date // Already parsed Date
     let timeToStation: TimeInterval // Seconds until it reaches the station (naptanId)
-    // Add other relevant fields from the TfL API response if needed
 }
 
 
@@ -32,8 +31,45 @@ class TfLDataService {
         return formatter
     }()
 
-
-    // Your existing methods for fetching and resolving station IDs
+    // fetch avaliable lines for the user depature station
+    func fetchAvailableLines(for naptanId: String, completion: @escaping ([String]) -> Void) {
+        let urlStr = "https://api.tfl.gov.uk/StopPoint/\(naptanId)"
+        guard let url = URL(string: urlStr) else { completion([]); return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            var result: [String] = []
+            if let data = data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let lines = json["lines"] as? [[String: Any]] {
+                for line in lines {
+                    if let id = line["id"] as? String {
+                        result.append(id)
+                    }
+                }
+            }
+            DispatchQueue.main.async { completion(result) }
+        }.resume()
+    }
+    
+    func fetchAllArrivals(for naptanId: String, completion: @escaping ([TfLArrivalPrediction]) -> Void) {
+        fetchAvailableLines(for: naptanId) { lineIds in
+            let group = DispatchGroup()
+            var allArrivals: [TfLArrivalPrediction] = []
+            for lineId in lineIds {
+                group.enter()
+                TfLDataService.shared.fetchTrainArrivals(lineId: lineId, stationNaptanId: naptanId) { result in
+                    if case .success(let arrivals) = result {
+                        allArrivals.append(contentsOf: arrivals)
+                    }
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                completion(allArrivals)
+            }
+        }
+    }
+    
+    
     func fetchAllTubeStationIds(completion: @escaping () -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/Mode/tube"
         guard let url = URL(string: urlStr) else { completion(); return }
@@ -64,6 +100,7 @@ class TfLDataService {
             }
         }.resume()
     }
+    
 
     // Enhanced tflStationId: Uses pre-fetched map, can be extended with API search later if needed.
     func resolveStationId(for stationName: String, completion: @escaping (String?) -> Void) {

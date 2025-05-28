@@ -56,6 +56,26 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var previousCatchStatus: CatchStatus? = nil // For haptic feedback
     
 
+    let TfLLinesColorMap: [String: String] = [
+        "bakerloo": "#B36305",
+        "central": "#E32017",
+        "circle": "#FFD300",
+        "district": "#00782A",
+        "hammersmith-city": "#F3A9BB",
+        "jubilee": "#A0A5A9",
+        "metropolitan": "#9B0056",
+        "northern": "#000000",
+        "piccadilly": "#003688",
+        "victoria": "#0098D4",
+        "waterloo-city": "#95CDBA",
+        "dlr": "#00AFAD",
+        "london-overground": "#EE7C0E",
+        "tfl-rail": "#0019A8",
+        "elizabeth": "#6950A1",
+        // add any others you use
+    ]
+    
+
     // Removed unused movingDot, dotCenterYConstraint, timelineMap, stopLabelMap unless re-added for intra-card progress
     
     private var locationManager = CLLocationManager()
@@ -430,9 +450,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     }
                     return
                 }
-
+                
                 guard let lineId = RouteLogic.shared.tflLineId(from: lineName) else {
-                     DispatchQueue.main.async {
+                    DispatchQueue.main.async {
                         self.addErrorLabel("Line ID not found for \(lineName).", to: strongCatchSectionView)
                         catchTrainCard?.layoutIfNeeded()
                     }
@@ -440,84 +460,84 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 }
                 
                 // 2. Fetch Arrivals
-                TfLDataService.shared.fetchTrainArrivals(lineId: lineId, stationNaptanId: naptanId) { result in
+                
+                TfLDataService.shared.fetchAllArrivals(for: naptanId) { allArrivals in
                     DispatchQueue.main.async {
-                        // Clear previous rows (except title) before adding new ones
-                        strongCatchSectionView.arrangedSubviews.filter { !($0 is UILabel && ($0 as? UILabel)?.text == catchTitleLabel.text) }.forEach { $0.removeFromSuperview() }
+                        // 1. Clear previous rows (except the title)
+                        strongCatchSectionView.arrangedSubviews
+                            .filter { !($0 is UILabel && ($0 as? UILabel)?.text == catchTitleLabel.text) }
+                            .forEach { $0.removeFromSuperview() }
 
-                        switch result {
-                        case .success(let tflPredictions):
-                            if tflPredictions.isEmpty {
-                                self.addErrorLabel("No upcoming train data available.", to: strongCatchSectionView)
-                            } else {
-                                let now = Date()
-                                var catchInfos: [CatchInfo] = []
-                                for prediction in tflPredictions {
-                                    // Use the expectedArrivalDate from the prediction which is already parsed
-                                    let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
-                                    let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
-                                    let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
-                                    
-                                    let catchInfo = CatchInfo(
-                                        timeToStation: timeNeededAtStationToReachPlatformSec,
-                                        // Use the formatted expectedArrival string directly from CatchInfo
-                                        expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
-                                        expectedArrivalDate: prediction.expectedArrival,
-                                        timeLeftToCatch: timeLeftToCatch,
-                                        catchStatus: status
-                                    )
-                                    catchInfos.append(catchInfo)
-                                }
-
-                                let relevantCatchInfos = catchInfos.filter { $0.catchStatus != .missed }.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
-                                var top3 = Array(relevantCatchInfos.prefix(3))
-                                if top3.isEmpty && !catchInfos.isEmpty {
-                                     top3 = Array(catchInfos.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }.prefix(3))
-                                }
-
-                                // CRITICAL: Update nextTrainArrivalDate for the JourneyProgressService
-                                // This should be done for the first leg (index == 0)
-                                if index == 0 {
-                                    if let firstTrainToAimFor = top3.first(where: { $0.catchStatus != .missed }) ?? top3.first {
-                                        self.nextTrainArrivalDate = firstTrainToAimFor.expectedArrivalDate
-                                        print("[RouteSummaryVC] Updated nextTrainArrivalDate for tracking: \(self.nextTrainArrivalDate)")
-                                        // If progressService is already running and you want to update its target:
-                                        // self.progressService?.updateTargetTrainArrival(self.nextTrainArrivalDate) // (Method needs to exist in service)
-                                        // Or, ensure setupProgressService is called *after* this is set.
-                                        self.setupProgressService() // Call setupProgressService after nextTrainArrivalDate is set for the first leg
-                                    } else {
-                                        print("[RouteSummaryVC] No valid trains to set nextTrainArrivalDate for index 0.")
-                                        // Handle case where there are no trains at all for the first leg.
-                                        // Perhaps JourneyProgressService should not start, or show a specific message.
-                                    }
-                                }
-
-                                var animatedRows: [UIView] = []
-                                for singleCatchInfo in top3 {
-                                    // Use the formatted expectedArrival string directly from CatchInfo
-                                    let row = CatchInfoRowView(
-                                        info: singleCatchInfo,
-                                        lineName: lineName,
-                                        lineColorHex: transitLegInfo.lineColorHex ?? "#007AFF"
-                                    )
-                                    row.alpha = 0
-                                    strongCatchSectionView.addArrangedSubview(row)
-                                    animatedRows.append(row)
-                                }
-                                
-                                UIView.animate(withDuration: 0.35, delay: 0, options: .curveEaseOut, animations: {
-                                    catchTrainCard?.layoutIfNeeded()
-                                })
-                                for (rowIndex, rowView) in animatedRows.enumerated() {
-                                    UIView.animate(withDuration: 0.3, delay: 0.1 + Double(rowIndex) * 0.08, options: .curveEaseOut, animations: {
-                                        rowView.alpha = 1
-                                    })
-                                }
-                            }
-                        case .failure(let error):
-                            print("[RouteSummaryVC] Error fetching train arrivals for \(lineName) at \(departureStationName): \(error.localizedDescription)")
-                            self.addErrorLabel("Could not load train times.", to: strongCatchSectionView)
+                        // 2. Handle empty arrivals
+                        if allArrivals.isEmpty {
+                            self.addErrorLabel("No upcoming train data available.", to: strongCatchSectionView)
+                            return
                         }
+
+                        // 3. Convert to CatchInfo
+                        let now = Date()
+                        var catchInfos: [CatchInfo] = []
+                        for prediction in allArrivals {
+                            let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
+                            let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
+                            let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
+
+                            let catchInfo = CatchInfo(
+                                lineName: prediction.lineName ?? (prediction.lineId ?? ""),
+                                lineColorHex: self.TfLLinesColorMap[prediction.lineId ?? ""] ?? "#007AFF",
+                                fromStation: departureStationName,
+                                toStation: prediction.destinationName ?? "",
+                                stops: [],
+                                expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
+                                expectedArrivalDate: prediction.expectedArrival,
+                                timeToStation: prediction.timeToStation,
+                                timeLeftToCatch: timeLeftToCatch,
+                                catchStatus: status
+                            )
+                            catchInfos.append(catchInfo)
+                        }
+
+                        // 4. Filter and sort: show only catchable trains (by soonest), top 3
+                        let relevantCatchInfos = catchInfos
+                            .filter { $0.catchStatus != .missed }
+                            .sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
+                        var top3 = Array(relevantCatchInfos.prefix(3))
+                        if top3.isEmpty, !catchInfos.isEmpty {
+                            // If all are technically "missed", just show soonest 3
+                            top3 = Array(catchInfos.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }.prefix(3))
+                        }
+
+                        // 5. Update ProgressService’s next target (only for the first segment)
+                        if index == 0 {
+                            if let firstTrain = top3.first(where: { $0.catchStatus != .missed }) ?? top3.first {
+                                self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
+                                print("[RouteSummaryVC] Updated nextTrainArrivalDate for tracking: \(self.nextTrainArrivalDate)")
+                                self.setupProgressService()
+                            } else {
+                                print("[RouteSummaryVC] No valid trains to set nextTrainArrivalDate for index 0.")
+                            }
+                        }
+
+                        // 6. Add new animated rows for each train
+                        var animatedRows: [UIView] = []
+                        for singleCatchInfo in top3 {
+                            let row = CatchInfoRowView(info: singleCatchInfo)
+                            row.alpha = 0
+                            strongCatchSectionView.addArrangedSubview(row)
+                            animatedRows.append(row)
+                        }
+
+                        // Animate in
+                        UIView.animate(withDuration: 0.35, delay: 0, options: .curveEaseOut, animations: {
+                            catchTrainCard?.layoutIfNeeded()
+                        })
+                        for (rowIndex, rowView) in animatedRows.enumerated() {
+                            UIView.animate(withDuration: 0.3, delay: 0.1 + Double(rowIndex) * 0.08, options: .curveEaseOut, animations: {
+                                rowView.alpha = 1
+                            })
+                        }
+
+                        // 7. Ensure layout refresh
                         catchTrainCard?.layoutIfNeeded()
                     }
                 }
@@ -529,9 +549,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
              }
              
             viewsToAdd.append(makeTransitCard(info: transitLegInfo, isTransfer: index > 0, legIndex: index))
-            
-
-
         }
         
         if let walkEndText = walkToDestinationTime, !walkEndText.isEmpty {
