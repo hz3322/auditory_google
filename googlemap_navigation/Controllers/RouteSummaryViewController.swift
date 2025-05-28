@@ -495,7 +495,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                                 var animatedRows: [UIView] = []
                                 for singleCatchInfo in top3 {
                                     // Use the formatted expectedArrival string directly from CatchInfo
-                                    let row = CatchInfoRowView(info: singleCatchInfo) // Assumes CatchInfoRowView is correctly implemented
+                                    let row = CatchInfoRowView(
+                                        info: singleCatchInfo,
+                                        lineName: lineName,
+                                        lineColorHex: transitLegInfo.lineColorHex ?? "#007AFF"
+                                    )
                                     row.alpha = 0
                                     strongCatchSectionView.addArrangedSubview(row)
                                     animatedRows.append(row)
