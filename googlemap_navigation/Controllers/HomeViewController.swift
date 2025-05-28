@@ -39,6 +39,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private var currentlySettingPlaceName: String? // Stores "Home", "Work" if a placeholder is tapped, or nil for new custom place.
     private var currentlyEditingFrequentPlace: SavedPlace?
 
+    private var isLoadingFrequentPlaces = false
 
     // MARK: - UI Components
     private let scrollView = UIScrollView()
@@ -125,71 +126,57 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     // MARK: - Data Handling for Frequent Places
     private func loadFrequentPlacesDataAndSetupInitialUI() {
-        SavedPlacesManager.shared.loadPlaces { [weak self] result in
-            DispatchQueue.main.async { // Ensure all subsequent calls are on the main thread
-                guard let self = self else { return }
-                switch result {
-                case .success(let places):
-                    self.frequentPlaces = places
-                    print("✅ Frequent places loaded from Firestore: \(places.count) items")
-                case .failure(let error):
-                    print("🛑 Error loading frequent places from Firestore: \(error.localizedDescription)")
-                    // Fallback to default placeholders in memory if Firestore load fails
-                    self.frequentPlaces = [
-                        SavedPlace(placeholderName: "Home", isSystemDefault: true),
-                        SavedPlace(placeholderName: "Work", isSystemDefault: true)
-                    ]
-                }
-                
-    
-                self.populateFrequentPlacesCards() // Populate the cards with loaded/default data
-                
-                self.isUILayoutComplete = true
-                
-                if self.locationManager.authorizationStatus == .authorizedWhenInUse || self.locationManager.authorizationStatus == .authorizedAlways {
-                               print("✅ UI setup complete. Starting location updates now.")
-                               self.locationManager.startUpdatingLocation()
-                } else if self.locationManager.authorizationStatus == .notDetermined {
-                               print("ℹ️ Location permission not determined. Waiting for user response.")
-                               // requestWhenInUseAuthorization 应该在 setupLocationManager 中已经被调用
-                }
-    
-               // Ensure location is available before trying to display location-based attractions
-               if self.currentLocation != nil {
-                   self.displayAttractions()
-               } else {
-                   // If location is not yet available, displayAttractions might be called
-                   // later by the locationManager's didUpdateLocations delegate method.
-                   // Or, might display a "waiting for location" message in the attractions section.
-                   print("ℹ️ Location not yet available to display attractions after initial UI setup.")
-               }
-           }
-       }
-}
-    
-    private func refreshFrequentPlacesUI() {
-        // Asynchronously load places and then repopulate cards on the main thread
+        fetchAndDisplayFrequentPlaces { [weak self] in
+            guard let self = self else { return }
+            
+            self.isUILayoutComplete = true
+            
+            if self.locationManager.authorizationStatus == .authorizedWhenInUse || 
+               self.locationManager.authorizationStatus == .authorizedAlways {
+                self.locationManager.startUpdatingLocation()
+            }
+            
+            if self.currentLocation != nil {
+                self.displayAttractions()
+            }
+        }
+    }
+
+    private func fetchAndDisplayFrequentPlaces(completion: (() -> Void)? = nil) {
+        guard !isLoadingFrequentPlaces else {
+            completion?()
+            return
+        }
+
+        isLoadingFrequentPlaces = true
+
         SavedPlacesManager.shared.loadPlaces { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+
                 switch result {
                 case .success(let places):
                     self.frequentPlaces = places
                 case .failure(let error):
-                    print("🛑 Error reloading frequent places: \(error.localizedDescription)")
-                    // Decide on fallback: keep old data, or show default placeholders
-                    // For now, let's keep potentially stale data if reload fails,
-                    // or if frequentPlaces is empty, load defaults.
+                    print("Error loading frequent places: \(error.localizedDescription)")
                     if self.frequentPlaces.isEmpty {
-                         self.frequentPlaces = [
-                             SavedPlace(placeholderName: "Home", isSystemDefault: true),
-                             SavedPlace(placeholderName: "Work", isSystemDefault: true)
-                         ]
+                        self.frequentPlaces = [
+                            SavedPlace(placeholderName: "Home", isSystemDefault: true),
+                            SavedPlace(placeholderName: "Work", isSystemDefault: true)
+                        ]
                     }
                 }
+                
                 self.populateFrequentPlacesCards()
+                self.isLoadingFrequentPlaces = false
+                completion?()
             }
         }
+    }
+
+    private func refreshFrequentPlacesUI() {
+        // Asynchronously load places and then repopulate cards on the main thread
+        fetchAndDisplayFrequentPlaces()
     }
 
     // MARK: - UI Setup Methods (Decomposed for clarity)

@@ -96,7 +96,6 @@ class JourneyProgressService {
         let elapsed = now.timeIntervalSince(startTime)
         let totalTime = walkToStationSec + stationToPlatformSec + transferTimesSec.reduce(0, +)
         let delta = trainArrival.timeIntervalSince(now)
-        let canCatch = (delta - totalTime) > 20
 
         // ---- PHASE LOGIC ----
         if phase == .walkToStation {

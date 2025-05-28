@@ -14,12 +14,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private let walkToDestinationCardTag = 3002
     
     // MARK: - Properties
-    private static let shortTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
-    
     private let movingDot = UIView()
     private var dotCenterYConstraint: NSLayoutConstraint?
     private var activeJourneySegmentCard: UIView?
@@ -27,17 +21,25 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     
     var totalEstimatedTime: String?
     var walkToStationTime: String?
+    var walkToStationTimeMin: Double = 0.0
     var walkToDestinationTime: String?
-    var transitInfos: [TransitInfo] = [] // Ensure this is populated with all necessary fields
+    var transitInfos: [TransitInfo] = []
     var routeDepartureTime: String?
     var routeArrivalTime: String?
     
     var walkToStationTimeSec: Double = 0
     var stationToPlatformTimeSec: Double = 120
     var transferTimesSec: [Double] = []
-    var nextTrainArrivalDate: Date = Date() // Critical: Should be the specific train JourneyProgressService tracks
+    var nextTrainArrivalDate: Date = Date()
     
     var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+    
+    private static let shortTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+    
     
     // UI
     private let scrollView = UIScrollView()
@@ -73,6 +75,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         return label
     }()
     
+  
+    
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -88,7 +92,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         setupLayout()
         populateSummary()
         calculateStationPositionRatio()
-        setupProgressService()
         
         locationManager.delegate = self
         locationManager.requestWhenInUseAuthorization()
@@ -148,7 +151,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
            if tflLogoImageView.superview != nil &&
               tflLogoImageView.constraints.contains(where: { $0.firstAttribute == .centerX }) == false && // Check if centerX constraint is NOT YET set
               progressBarBackground.bounds.width > 0 &&
-              stationPositionRatio > 0 && stationPositionRatio < 1 { // Only position if ratio is meaningful
+              stationPositionRatio > 0 && stationPositionRatio < 1 { 
                positionStationMarkerIcon()
            }
     }
@@ -245,49 +248,65 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     // Rename this method and adjust its logic slightly if needed.
     private func positionStationMarkerIcon() {
         guard progressBarBackground.bounds.width > 0 else {
-            print("Warning: progressBarBackground has no width for positionStationMarkerIcon.")
+            print("Warning: progressBarBackground has no width yet for positionStationMarkerIcon.")
+            tflLogoImageView.isHidden = true
+            return
+        }
+
+        guard self.stationPositionRatio >= 0 && self.stationPositionRatio <= 1 else {
+            print("Warning: stationPositionRatio (\(self.stationPositionRatio)) is out of bounds [0,1].")
+            tflLogoImageView.isHidden = true
+            return
+        }
+
+        // Define display widths for icons
+        let personDotDisplayWidth: CGFloat = 28.0
+        let platformEmojiDisplayWidth: CGFloat = 22.0
+        let tflLogoDisplayWidth: CGFloat = 22.0
+
+        // Define internal padding for the progress bar
+        let barInternalLeadingPadding: CGFloat = 4
+        let barInternalTrailingPadding: CGFloat = 8
+
+        // Calculate track boundaries
+        let trackStartX = barInternalLeadingPadding + (personDotDisplayWidth / 2)
+        let trackEndX = progressBarBackground.bounds.width - barInternalTrailingPadding - (platformEmojiDisplayWidth / 2)
+        let effectiveTrackLength = trackEndX - trackStartX
+
+        guard effectiveTrackLength >= tflLogoDisplayWidth else {
+            print("Warning: Track length too short for station marker.")
+            tflLogoImageView.isHidden = true
             return
         }
         
-        // stationPositionRatio should have been calculated in calculateStationPositionRatio()
-        // Ensure calculateStationPositionRatio() is called before this, typically in viewDidLoad or after data is ready.
+        // Calculate logo position along the track
+        let logoCenterOnTrack = effectiveTrackLength * self.stationPositionRatio
+        let finalMarkerCenterXConstant = trackStartX + logoCenterOnTrack
 
-        guard self.stationPositionRatio > 0 && self.stationPositionRatio < 1 else {
-            // If ratio is 0 or 1, station is at the start/end, might not need a distinct marker or hide it
-            print("Warning: stationPositionRatio (\(self.stationPositionRatio)) is at an extreme, station marker might overlap or be hidden.")
-            tflLogoImageView.isHidden = true // Optionally hide if at an extreme
-            return
+        // Update constraints
+        tflLogoImageView.constraints.forEach { constraint in
+            if constraint.firstAttribute == .centerX {
+                constraint.isActive = false
+            }
         }
-        tflLogoImageView.isHidden = false
-
-        // Determine the travelable width for the *center* of icons.
-        // This helps place the station marker proportionally within the space the personDot effectively travels.
-        let startEdgePadding: CGFloat = 4 + (personDot.intrinsicContentSize.width / 2) // Center of personDot at start
-        let endEdgePadding: CGFloat = 8 + (platformEmoji.intrinsicContentSize.width / 2)   // Center of platformEmoji at end
-        let effectiveBarWidth = progressBarBackground.bounds.width - startEdgePadding - endEdgePadding
         
-        let markerCenterOffset = effectiveBarWidth * self.stationPositionRatio
-
-        // Remove any existing centerX constraint for tflLogoImageView before adding a new one
-        // This is important if this method can be called multiple times (e.g., on layout changes)
-        // A more robust way is to store the constraint and modify its constant.
-        // For now, assuming constraints are set once via the viewDidLayoutSubviews check.
-
         NSLayoutConstraint.activate([
-            // tflLogoImageView.centerYAnchor is already set in setupProgressBar
-            tflLogoImageView.centerXAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: startEdgePadding + markerCenterOffset)
-            // tflLogoImageView width/height constraints are already set in setupProgressBar
+            tflLogoImageView.centerXAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: finalMarkerCenterXConstant)
         ])
+        
+        tflLogoImageView.isHidden = false
     }
     
     
-    private func calculateStationPositionRatio() { // Keep this method
+    private func calculateStationPositionRatio() {
         let totalPreTrainTime = walkToStationTimeSec + stationToPlatformTimeSec
+        
         if totalPreTrainTime > 0 {
             self.stationPositionRatio = CGFloat(walkToStationTimeSec / totalPreTrainTime)
+            print("Calculated Station Position Ratio: \(self.stationPositionRatio)")
         } else {
-            self.stationPositionRatio = 0.4 // Default
-            print("Warning: totalPreTrainTime is zero for stationPositionRatio.")
+            self.stationPositionRatio = 0.5
+            print("Warning: totalPreTrainTime is zero for stationPositionRatio. Using default: 0.5")
         }
     }
     
@@ -315,15 +334,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         ])
     }
     
+    // tracking user's real time progress through their planned journey - init journey progress Service
     private func setupProgressService() {
-        // Ensure userOriginLocation is available if your service needs it for the initial walk.
-        // It might be set from a previous screen or fetched here.
-        // For now, we assume it's either set or JourneyProgressService can handle it being nil.
-
         guard let firstTransitInfo = transitInfos.first,
               let departureStationName = firstTransitInfo.departureStation,
-              let stationData = stationCoordinates[departureStationName]
-        else {
+              let stationData = stationCoordinates[departureStationName] else {
             print("Error: Cannot setup ProgressService - missing transit info (departureStation) or stationCoordinates for \(transitInfos.first?.departureStation ?? "Unknown Station").")
             deltaTimeLabel.text = "Route data incomplete."
             deltaTimeLabel.textColor = .systemRed
@@ -332,15 +347,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         
         let stationLocationForService = CLLocation(latitude: stationData.latitude, longitude: stationData.longitude)
 
-        // Make sure nextTrainArrivalDate is correctly set for the *first* train the user is aiming for.
-        // This might come from CatchInfo.fetchCatchInfos or another source.
-        // If `transitInfos` has multiple legs, `nextTrainArrivalDate` should correspond to the *first relevant train*.
-        
         let service = JourneyProgressService(
             walkToStationSec: walkToStationTimeSec,
             stationToPlatformSec: stationToPlatformTimeSec,
             transferTimesSec: transferTimesSec, // Ensure this is correctly populated
-            trainArrival: nextTrainArrivalDate, // CRITICAL: This date is what the service tracks against
+            trainArrival: nextTrainArrivalDate,
             originLocation: userOriginLocation, // Can be nil if service handles it
             stationLocation: stationLocationForService
         )
@@ -355,6 +366,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         guard !stationCoordinates.isEmpty else {
             print("[RouteSummaryVC] stationCoordinates not loaded yet. Delaying populateSummary.")
             return
+        }
+
+        // Convert walking time from minutes to seconds
+        if let walkStartText = walkToStationTime, !walkStartText.isEmpty {
+            // Extract minutes from the text (assuming format like "5 min")
+            if let minutes = walkStartText.components(separatedBy: " ").first,
+               let minutesDouble = Double(minutes) {
+                self.walkToStationTimeMin = minutesDouble
+                self.walkToStationTimeSec = minutesDouble * 60.0
+            }
         }
 
         // Setup progress service ONLY after station data is loaded
@@ -682,7 +703,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         intermediateLabel.textColor = .label
         intermediateLabel.numberOfLines = 0
         intermediateLabel.isHidden = true
-        let stops = info.stopNames ?? []
+        let stops = info.stopNames
         if stops.count > 2 {
             let middleStops = stops[1..<(stops.count - 1)]
             intermediateLabel.text = middleStops.map { "•  \($0)" }.joined(separator: "\n")
@@ -738,7 +759,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
     // MARK: - Location Manager Delegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else { return }
+        guard locations.last != nil else { return }
         // Pass location to JourneyProgressService. It should handle the logic.
         // Make sure JourneyProgressService has a method like this:
         // self.progressService?.updateUserLocation(location)
@@ -1065,12 +1086,9 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
     }
 }
 
-// MARK: - Timeline View (Keep as is)
-
-// MARK: - Color Extension (Keep as is)
 extension UIColor {
     convenience init(hex: String) {
-        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")
+        let hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")
         var rgb: UInt64 = 0
         Scanner(string: hexSanitized).scanHexInt64(&rgb)
         let r = CGFloat((rgb & 0xFF0000) >> 16) / 255.0
@@ -1085,7 +1103,7 @@ extension UIColor {
     }
 }
 
-// MARK: - PaddingLabel (Keep as is)
+
 class PaddingLabel: UILabel {
     var insets = UIEdgeInsets(top: 4, left: 8, bottom: 4, right: 8) // Adjusted padding
     override func drawText(in rect: CGRect) {

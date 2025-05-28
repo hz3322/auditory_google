@@ -124,10 +124,10 @@ class TfLDataService {
     }
 
 
-    // NEW method to fetch arrivals
+   
     func fetchTrainArrivals(
         lineId: String,
-        stationNaptanId: String, // Expecting Naptan ID here
+        stationNaptanId: String,
         completion: @escaping (Result<[TfLArrivalPrediction], Error>) -> Void
     ) {
         let urlStr = "https://api.tfl.gov.uk/Line/\(lineId)/Arrivals/\(stationNaptanId)?app_key=\(APIKeys.tflAppKey)"

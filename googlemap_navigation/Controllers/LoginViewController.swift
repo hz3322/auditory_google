@@ -216,10 +216,6 @@ class LoginViewController: UIViewController {
                     throw NSError(domain: "FirebaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Firebase is not properly configured"])
                 }
                 
-                print("ℹ️ Firebase configuration:")
-                print("- Project ID: \(firebaseApp.options.projectID ?? "Not set")")
-                print("- Bundle ID: \(firebaseApp.options.bundleID ?? "Not set")")
-                
                 // Create user with email and password
                 let authResult = try await Auth.auth().createUser(withEmail: email, password: password)
                 print("✅ User created successfully with UID: \(authResult.user.uid)")

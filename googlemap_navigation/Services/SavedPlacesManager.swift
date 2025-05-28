@@ -26,13 +26,13 @@ struct SavedPlace: Codable, Identifiable, Hashable {
     }
 
     // Placeholder initializer (e.g., for "Set Home Address")
-    init(placeholderName: String, isSystemDefault: Bool = true) { // 确保这里的 isSystemDefault 也被设置
+    init(placeholderName: String, isSystemDefault: Bool = true) {
         self.id = UUID()
         self.name = placeholderName
         self.address = "Tap to set \(placeholderName)"
         self.latitude = 0 // Invalid coordinates, clearly a placeholder
         self.longitude = 0
-        self.isSystemDefault = isSystemDefault // **** 确保这里也使用 isSystemDefault ****
+        self.isSystemDefault = isSystemDefault
     }
 }
 
@@ -108,7 +108,6 @@ class SavedPlacesManager {
                 }
             } ?? []
 
-            // 确保 Home 和 Work 存在于列表中
             var foundHome = false
             var foundWork = false
 
