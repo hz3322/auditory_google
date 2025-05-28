@@ -1,7 +1,17 @@
 import UIKit
 import CoreLocation
 
+
 class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
+    
+    // MARK: - Tag Constants
+    private let transitCardBaseTag = 1000
+    private let timelineViewTag = 2000
+    private let timelineStartLabelTag = 2001
+    private let timelineEndLabelTag = 2002
+    private let walkToStationCardTag = 3000
+    private let stationToPlatformCardTag = 3001
+    private let walkToDestinationCardTag = 3002
     
     // MARK: - Properties
     private static let shortTimeFormatter: DateFormatter = {
@@ -9,6 +19,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
+    
+    private let movingDot = UIView()
+    private var dotCenterYConstraint: NSLayoutConstraint?
+    private var activeJourneySegmentCard: UIView?
+    private var currentActiveTransitLegIndex: Int?
     
     var totalEstimatedTime: String?
     var walkToStationTime: String?
@@ -71,16 +86,45 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         
         setupProgressBar()
         setupLayout()
-        
-        // Ensure all data (walkToStationTimeSec, nextTrainArrivalDate, transitInfos etc.)
-        // is fully loaded and correct BEFORE calling populateSummary and setupProgressService.
-        // If transitInfos is fetched asynchronously, call these after data is ready.
         populateSummary()
+        calculateStationPositionRatio()
         setupProgressService()
         
         locationManager.delegate = self
         locationManager.requestWhenInUseAuthorization()
-        // Location updates are typically started/stopped by JourneyProgressService or by journeyPhaseDidChange
+        
+        // Add initial highlighting for Walk to Station card
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            if let walkToStationCard = self.stackView.arrangedSubviews.first(where: { $0.tag == self.walkToStationCardTag }) {
+                self.activeJourneySegmentCard = walkToStationCard
+                
+                UIView.animate(withDuration: 0.35, delay: 0.05, options: .curveEaseOut, animations: {
+                    walkToStationCard.transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
+                    walkToStationCard.backgroundColor = AppColors.highlightYellow
+                    walkToStationCard.layer.shadowOpacity = 0.15
+                    walkToStationCard.layer.shadowRadius = 12
+                    
+                    // Update text colors
+                    walkToStationCard.subviews.forEach { view in
+                        if let stack = view as? UIStackView {
+                            stack.arrangedSubviews.forEach { subview in
+                                if let label = subview as? UILabel {
+                                    label.textColor = AppColors.highlightText
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Scroll to make the active card visible
+                    let cardFrameInScrollView = self.scrollView.convert(walkToStationCard.frame, from: self.stackView)
+                    var visibleRect = cardFrameInScrollView
+                    visibleRect.origin.y -= 20
+                    visibleRect.size.height += 40
+                    self.scrollView.scrollRectToVisible(visibleRect, animated: true)
+                })
+            }
+        }
     }
     
     @objc private func backButtonTapped() {
@@ -100,20 +144,20 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // Position TfL logo once progressBarBackground has valid bounds and times are set.
-        if tflLogoImageView.superview != nil &&
-           tflLogoImageView.constraints.isEmpty && // Only set constraints once
-           progressBarBackground.bounds.width > 0 &&
-           (walkToStationTimeSec + stationToPlatformTimeSec > 0) { // Ensure times are valid
-            positionTflLogo()
-        }
+           // Ensure stationPositionRatio is calculated and progressBarBackground has its bounds.
+           if tflLogoImageView.superview != nil &&
+              tflLogoImageView.constraints.contains(where: { $0.firstAttribute == .centerX }) == false && // Check if centerX constraint is NOT YET set
+              progressBarBackground.bounds.width > 0 &&
+              stationPositionRatio > 0 && stationPositionRatio < 1 { // Only position if ratio is meaningful
+               positionStationMarkerIcon()
+           }
     }
     
     // MARK: - UI Setup
     private func setupProgressBar() {
         view.addSubview(sloganLabel)
         
-        progressBarCard.backgroundColor = .systemBackground // Adapts to light/dark mode
+        progressBarCard.backgroundColor = .systemBackground
         progressBarCard.layer.cornerRadius = 18
         progressBarCard.layer.shadowColor = UIColor.black.cgColor
         progressBarCard.layer.shadowOpacity = 0.06
@@ -131,8 +175,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             progressBarCard.heightAnchor.constraint(equalToConstant: 72)
         ])
         
-        progressBarBackground.backgroundColor = UIColor.secondarySystemBackground // Adapts
-        progressBarBackground.layer.cornerRadius = progressBarBackground.heightAnchor.constraint(equalToConstant: 28).constant / 2 // Pill shape
+        let progressBarBackgroundHeight: CGFloat = 28
+        progressBarBackground.backgroundColor = UIColor.secondarySystemBackground
+        progressBarBackground.layer.cornerRadius = progressBarBackgroundHeight / 2
         progressBarBackground.translatesAutoresizingMaskIntoConstraints = false
         progressBarCard.addSubview(progressBarBackground)
         
@@ -140,90 +185,112 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             progressBarBackground.centerYAnchor.constraint(equalTo: progressBarCard.centerYAnchor),
             progressBarBackground.leadingAnchor.constraint(equalTo: progressBarCard.leadingAnchor, constant: 18),
             progressBarBackground.trailingAnchor.constraint(equalTo: progressBarCard.trailingAnchor, constant: -18),
-            progressBarBackground.heightAnchor.constraint(equalToConstant: 28)
+            progressBarBackground.heightAnchor.constraint(equalToConstant: progressBarBackgroundHeight)
         ])
 
+        // --- Person Dot (User's current position) ---
+        personDot.text = "🧑"
+        personDot.font = .systemFont(ofSize: 25)
+        personDot.translatesAutoresizingMaskIntoConstraints = false
+        progressBarBackground.addSubview(personDot)
+        
+        personDotLeadingConstraint = personDot.leadingAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: 4) // Initial padding
+        personDotLeadingConstraint?.isActive = true
+        
+        NSLayoutConstraint.activate([
+            personDot.centerYAnchor.constraint(equalTo: progressBarBackground.centerYAnchor),
+            // personDot.widthAnchor.constraint(equalToConstant: 28), // Optional: for explicit sizing
+            // personDot.heightAnchor.constraint(equalToConstant: 28)  // Optional: for explicit sizing
+        ])
+
+        // --- TfL Logo (Station Marker - positioned dynamically) ---
         tflLogoImageView.image = UIImage(named: "london-underground") // Ensure asset exists
         tflLogoImageView.contentMode = .scaleAspectFit
         tflLogoImageView.translatesAutoresizingMaskIntoConstraints = false
         progressBarBackground.addSubview(tflLogoImageView)
+        // Initial constraints for size, centerX will be set in positionStationMarkerIcon()
+        NSLayoutConstraint.activate([
+            tflLogoImageView.centerYAnchor.constraint(equalTo: progressBarBackground.centerYAnchor),
+            tflLogoImageView.widthAnchor.constraint(equalToConstant: 22), // Size of the station marker
+            tflLogoImageView.heightAnchor.constraint(equalToConstant: 22)
+        ])
 
-        platformEmoji.text = "🚇"
+
+        // --- Platform Emoji (End of the 'walk to platform' segment) ---
+        platformEmoji.text = "🚇" // This is back!
         platformEmoji.font = .systemFont(ofSize: 22)
         platformEmoji.translatesAutoresizingMaskIntoConstraints = false
         progressBarBackground.addSubview(platformEmoji)
         
         NSLayoutConstraint.activate([
             platformEmoji.centerYAnchor.constraint(equalTo: progressBarBackground.centerYAnchor),
-            platformEmoji.trailingAnchor.constraint(equalTo: progressBarBackground.trailingAnchor, constant: -8)
+            platformEmoji.trailingAnchor.constraint(equalTo: progressBarBackground.trailingAnchor, constant: -8) // Padding from right
         ])
 
-        personDot.text = "🧑"
-        personDot.font = .systemFont(ofSize: 25)
-        personDot.translatesAutoresizingMaskIntoConstraints = false
-        progressBarBackground.addSubview(personDot)
-        
-        personDotLeadingConstraint = personDot.leadingAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: 4)
-        personDotLeadingConstraint?.isActive = true
-        
-        NSLayoutConstraint.activate([
-            personDot.centerYAnchor.constraint(equalTo: progressBarBackground.centerYAnchor),
-            // Width/Height can be omitted if intrinsicContentSize of emoji is sufficient, or set explicitly
-            // personDot.widthAnchor.constraint(equalToConstant: 28),
-            // personDot.heightAnchor.constraint(equalToConstant: 28)
-        ])
-
-        deltaTimeLabel.font = .systemFont(ofSize: 14, weight: .semibold) // Adjusted size
+        // deltaTimeLabel setup (remains the same)
+        deltaTimeLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         deltaTimeLabel.textAlignment = .center
-        deltaTimeLabel.numberOfLines = 0 // Allow wrapping if text gets long
+        deltaTimeLabel.numberOfLines = 0
         deltaTimeLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(deltaTimeLabel)
 
         NSLayoutConstraint.activate([
-            deltaTimeLabel.topAnchor.constraint(equalTo: progressBarCard.bottomAnchor, constant: 12), // Increased spacing
+            deltaTimeLabel.topAnchor.constraint(equalTo: progressBarCard.bottomAnchor, constant: 12),
             deltaTimeLabel.centerXAnchor.constraint(equalTo: progressBarCard.centerXAnchor),
-            deltaTimeLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20), // Allow full width
+            deltaTimeLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
             deltaTimeLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
         ])
     }
-
-    private func positionTflLogo() {
+    
+    // Rename this method and adjust its logic slightly if needed.
+    private func positionStationMarkerIcon() {
         guard progressBarBackground.bounds.width > 0 else {
-            print("Warning: progressBarBackground has no width for positionTflLogo.")
+            print("Warning: progressBarBackground has no width for positionStationMarkerIcon.")
             return
         }
-        let totalPreTrainTime = walkToStationTimeSec + stationToPlatformTimeSec
-        // Ensure totalPreTrainTime is positive to prevent division by zero or incorrect ratio
-        guard totalPreTrainTime > 0 else {
-            // Default position if times are zero, e.g., center or hide
-            tflLogoImageView.isHidden = true // Or set a default centerX constraint
-            print("Warning: totalPreTrainTime is zero, cannot calculate stationPositionRatio accurately.")
+        
+        // stationPositionRatio should have been calculated in calculateStationPositionRatio()
+        // Ensure calculateStationPositionRatio() is called before this, typically in viewDidLoad or after data is ready.
+
+        guard self.stationPositionRatio > 0 && self.stationPositionRatio < 1 else {
+            // If ratio is 0 or 1, station is at the start/end, might not need a distinct marker or hide it
+            print("Warning: stationPositionRatio (\(self.stationPositionRatio)) is at an extreme, station marker might overlap or be hidden.")
+            tflLogoImageView.isHidden = true // Optionally hide if at an extreme
             return
         }
         tflLogoImageView.isHidden = false
-        stationPositionRatio = CGFloat(walkToStationTimeSec / totalPreTrainTime)
 
-
-        let startPadding: CGFloat = 4 // From leading of progressBarBackground to where personDot can start
-        let tflLogoWidth: CGFloat = 22
-        // Effective widths of start/end icons for calculation
-        let personDotEffectiveWidth = personDot.intrinsicContentSize.width > 0 ? personDot.intrinsicContentSize.width : 28
-        let platformEmojiEffectiveWidth = platformEmoji.intrinsicContentSize.width > 0 ? platformEmoji.intrinsicContentSize.width : 22
-        let platformEmojiTrailingPadding: CGFloat = 8
-
-        // This is the width available for the *center* of the personDot to travel
-        let travelableWidthForPersonDotCenter = progressBarBackground.bounds.width - startPadding - (personDotEffectiveWidth / 2) - (platformEmojiEffectiveWidth / 2) - platformEmojiTrailingPadding
+        // Determine the travelable width for the *center* of icons.
+        // This helps place the station marker proportionally within the space the personDot effectively travels.
+        let startEdgePadding: CGFloat = 4 + (personDot.intrinsicContentSize.width / 2) // Center of personDot at start
+        let endEdgePadding: CGFloat = 8 + (platformEmoji.intrinsicContentSize.width / 2)   // Center of platformEmoji at end
+        let effectiveBarWidth = progressBarBackground.bounds.width - startEdgePadding - endEdgePadding
         
-        // Position TfL logo's center relative to the start of this travelable width
-        let logoCenterOffsetWithinTravelable = travelableWidthForPersonDotCenter * stationPositionRatio
+        let markerCenterOffset = effectiveBarWidth * self.stationPositionRatio
+
+        // Remove any existing centerX constraint for tflLogoImageView before adding a new one
+        // This is important if this method can be called multiple times (e.g., on layout changes)
+        // A more robust way is to store the constraint and modify its constant.
+        // For now, assuming constraints are set once via the viewDidLayoutSubviews check.
 
         NSLayoutConstraint.activate([
-            tflLogoImageView.centerYAnchor.constraint(equalTo: progressBarBackground.centerYAnchor),
-            tflLogoImageView.centerXAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: startPadding + (personDotEffectiveWidth / 2) + logoCenterOffsetWithinTravelable),
-            tflLogoImageView.widthAnchor.constraint(equalToConstant: tflLogoWidth),
-            tflLogoImageView.heightAnchor.constraint(equalToConstant: 22)
+            // tflLogoImageView.centerYAnchor is already set in setupProgressBar
+            tflLogoImageView.centerXAnchor.constraint(equalTo: progressBarBackground.leadingAnchor, constant: startEdgePadding + markerCenterOffset)
+            // tflLogoImageView width/height constraints are already set in setupProgressBar
         ])
     }
+    
+    
+    private func calculateStationPositionRatio() { // Keep this method
+        let totalPreTrainTime = walkToStationTimeSec + stationToPlatformTimeSec
+        if totalPreTrainTime > 0 {
+            self.stationPositionRatio = CGFloat(walkToStationTimeSec / totalPreTrainTime)
+        } else {
+            self.stationPositionRatio = 0.4 // Default
+            print("Warning: totalPreTrainTime is zero for stationPositionRatio.")
+        }
+    }
+    
     
     private func setupLayout() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -287,9 +354,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         // Check if stationCoordinates are loaded before setting up progress service
         guard !stationCoordinates.isEmpty else {
             print("[RouteSummaryVC] stationCoordinates not loaded yet. Delaying populateSummary.")
-            // Consider adding an observer or re-calling this method when stationCoordinates are set.
-            // For now, we'll let the error label appear.
-            // addErrorLabel("Station data not available.", to: stackView)
             return
         }
 
@@ -300,11 +364,15 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         var viewsToAdd: [UIView] = []
 
         if let walkStartText = walkToStationTime, !walkStartText.isEmpty {
-            viewsToAdd.append(makeCard(title: "🚶 Walk to Station", subtitle: walkStartText))
+            let walkToStationCard = makeCard(title: "🚶 Walk to Station", subtitle: walkStartText)
+            walkToStationCard.tag = walkToStationCardTag
+            viewsToAdd.append(walkToStationCard)
         }
         
         for (index, transitLegInfo) in transitInfos.enumerated() {
-            viewsToAdd.append(makeCard(title: "🚉 Station to Platform", subtitle: "Approx. 2 minutes"))
+            let stationToPlatformCard = makeCard(title: "🚉 Station to Platform", subtitle: "Approx. 2 minutes")
+            stationToPlatformCard.tag = stationToPlatformCardTag
+            viewsToAdd.append(stationToPlatformCard)
 
             let catchSectionView = UIStackView()
             catchSectionView.axis = .vertical
@@ -435,14 +503,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                  viewsToAdd.append(makeCard(title: "🚶‍♀️ Transfer", subtitle: "Est. Transfer Time")) // Placeholder subtitle
              }
              
-            viewsToAdd.append(makeTransitCard(info: transitLegInfo, isTransfer: index > 0))
+            viewsToAdd.append(makeTransitCard(info: transitLegInfo, isTransfer: index > 0, legIndex: index))
             
 
 
         }
         
         if let walkEndText = walkToDestinationTime, !walkEndText.isEmpty {
-            viewsToAdd.append(makeCard(title: "🏁 Walk to Destination", subtitle: walkEndText))
+            let walkToDestinationCard = makeCard(title: "🏁 Walk to Destination", subtitle: walkEndText)
+            walkToDestinationCard.tag = walkToDestinationCardTag
+            viewsToAdd.append(walkToDestinationCard)
         }
 
         for (idx, cardView) in viewsToAdd.enumerated() {
@@ -484,7 +554,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     
     // MARK: - Card Makers
     private func makeCard(title: String, subtitle: String, internalPadding: CGFloat = 18) -> UIView {
-        // ... (implementation from previous response, using .systemBackground and .label/.secondaryLabel for text) ...
         let card = UIView()
         card.backgroundColor = .systemBackground
         card.layer.cornerRadius = 16
@@ -492,6 +561,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         card.layer.shadowOpacity = 0.08
         card.layer.shadowRadius = 12
         card.layer.shadowOffset = CGSize(width: 0, height: 4)
+        card.clipsToBounds = false // Important for shadow to be visible
         
         let titleLabel = UILabel()
         titleLabel.text = title
@@ -539,9 +609,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         return card
     }
     
-    private func makeTransitCard(info: TransitInfo, isTransfer: Bool) -> UIView {
-        // ... (implementation from previous response, using .systemBackground and adaptive text colors) ...
-        // This is the version with the accent bar.
+    private func makeTransitCard(info: TransitInfo, isTransfer: Bool, legIndex: Int) -> UIView {
         let card = UIView()
         card.backgroundColor = .systemBackground
         card.layer.cornerRadius = 16
@@ -550,6 +618,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         card.layer.shadowRadius = 12
         card.layer.shadowOffset = CGSize(width: 0, height: 4)
         card.translatesAutoresizingMaskIntoConstraints = false
+        card.tag = transitCardBaseTag + legIndex // Tag the card with its leg index
 
         let accentColor = UIColor(hex: info.lineColorHex ?? "#007AFF")
 
@@ -559,11 +628,12 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         accentBar.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(accentBar)
 
-        let timeline = TimelineView() // Ensure TimelineView is defined
-        timeline.lineColor = UIColor.systemGray3 // Adjusted for better visibility on systemBackground
+        let timeline = TimelineView()
+        timeline.lineColor = UIColor.systemGray3
         timeline.translatesAutoresizingMaskIntoConstraints = false
+        timeline.tag = timelineViewTag // Tag the timeline view
         
-        let lineBadgeLabel = PaddingLabel() // Ensure PaddingLabel is defined
+        let lineBadgeLabel = PaddingLabel()
         lineBadgeLabel.text = info.lineName
         lineBadgeLabel.font = .systemFont(ofSize: 12, weight: .bold)
         lineBadgeLabel.textColor = accentColor.isLight ? .black.withAlphaComponent(0.8) : .white
@@ -580,8 +650,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         startLabel.text = info.departureStation
         startLabel.font = .systemFont(ofSize: 17, weight: .semibold)
         startLabel.textColor = .label
-        startLabel.tag = 999
-        // stopLabelMap[info.departureStation ?? ""] = startLabel // Uncomment if stopLabelMap is used
+        startLabel.tag = timelineStartLabelTag // Tag the start label
 
         let crowdLabel = UILabel()
         crowdLabel.text = info.delayStatus
@@ -635,7 +704,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         endLabel.text = info.arrivalStation
         endLabel.font = .systemFont(ofSize: 17, weight: .semibold)
         endLabel.textColor = .label
-        // stopLabelMap[info.arrivalStation ?? ""] = endLabel // Uncomment if stopLabelMap is used
+        endLabel.tag = timelineEndLabelTag // Tag the end label
 
         let contentStack = UIStackView(arrangedSubviews: [lineBadgeLabel, startLabel, crowdLabel, toggleRow, intermediateLabel, endLabel])
         contentStack.axis = .vertical
@@ -701,6 +770,36 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     
     // Removed setupMovingDot as its usage depends on more context (active card, etc.)
     // You can re-add it if you have a clear way to determine the active timeline and card.
+
+    private func setupMovingDot(attachedTo timeline: TimelineView, in card: UIView) {
+        guard let startRefLabel = card.viewWithTag(timelineStartLabelTag) as? UILabel else {
+            print("Error: Start reference label (tag \(timelineStartLabelTag)) not found in card for moving dot.")
+            return
+        }
+        
+        movingDot.removeFromSuperview() // Remove existing if any before adding
+        movingDot.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.9)
+        movingDot.layer.cornerRadius = 7 // Make it slightly larger than timeline line width
+        movingDot.layer.borderWidth = 1.5
+        movingDot.layer.borderColor = UIColor.white.withAlphaComponent(0.95).cgColor
+        movingDot.translatesAutoresizingMaskIntoConstraints = false
+        timeline.addSubview(movingDot)
+        
+        // Initial Y position based on the start reference label for this timeline
+        let initialYPositionInTimeline = startRefLabel.convert(CGPoint(x: 0, y: startRefLabel.bounds.midY), to: timeline).y
+                                        
+        dotCenterYConstraint?.isActive = false // Deactivate old one
+        dotCenterYConstraint = movingDot.centerYAnchor.constraint(equalTo: timeline.topAnchor, constant: initialYPositionInTimeline)
+        
+        NSLayoutConstraint.activate([
+            movingDot.centerXAnchor.constraint(equalTo: timeline.centerXAnchor),
+            movingDot.widthAnchor.constraint(equalToConstant: 14),
+            movingDot.heightAnchor.constraint(equalToConstant: 14),
+            dotCenterYConstraint!
+        ])
+        movingDot.alpha = 0 // Start hidden
+        UIView.animate(withDuration: 0.3, delay: 0.1) { self.movingDot.alpha = 1 } // Fade in
+    }
 }
 
 // MARK: - JourneyProgressDelegate Extension
@@ -709,30 +808,30 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
         overallProgress: Double,
         phaseProgress: Double,
         currentCatchStatus: CatchStatus,
-        delta: TimeInterval, // This is time_until_train_arrival_at_platform
+        delta: TimeInterval,
         uncertainty: TimeInterval,
         phase: ProgressPhase
     ) {
-        // --- Update Main Progress Bar (Person Dot) ---
+        // --- 1. Update Main Progress Bar (Person Dot Position) ---
         let clampedOverallProgress = min(max(overallProgress, 0), 1)
-        if progressBarBackground.bounds.width > 0 { // Ensure layout has occurred
+        if progressBarBackground.bounds.width > 0 {
             let startPadding: CGFloat = 4
             let personDotEffectiveWidth = personDot.intrinsicContentSize.width > 0 ? personDot.intrinsicContentSize.width : 28
             let platformEmojiEffectiveWidth = platformEmoji.intrinsicContentSize.width > 0 ? platformEmoji.intrinsicContentSize.width : 22
             let platformEmojiTrailingPadding: CGFloat = 8
             
-            let availableWidthForDotTravel = progressBarBackground.bounds.width - startPadding - personDotEffectiveWidth - platformEmojiTrailingPadding - platformEmojiEffectiveWidth
+            let endPointForDotLeadingEdge = progressBarBackground.bounds.width - platformEmojiTrailingPadding - platformEmojiEffectiveWidth - personDotEffectiveWidth
+            let actualTravelableWidth = max(0, endPointForDotLeadingEdge - startPadding)
             
-            let leadingConstant = startPadding + (availableWidthForDotTravel * CGFloat(clampedOverallProgress))
+            let leadingConstant = startPadding + (actualTravelableWidth * CGFloat(clampedOverallProgress))
             personDotLeadingConstraint?.constant = leadingConstant
         }
 
-        // --- Visual Cue for Reaching Station on Progress Bar ---
+        // --- 2. Visual Cue for Reaching Station (TfL Logo Pulsing on main progress bar) ---
         if clampedOverallProgress >= stationPositionRatio &&
            !self.hasReachedStationVisualCue &&
-           phase == .walkToStation && // Only cue during the walk
-           stationPositionRatio > 0 && stationPositionRatio < 1 { // Ensure ratio is valid
-            
+           phase == .walkToStation && 
+           stationPositionRatio > 0 && stationPositionRatio < 1 {
             self.hasReachedStationVisualCue = true
             let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
             feedbackGenerator.prepare()
@@ -746,112 +845,227 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
             }
         }
         
-        // Animate Progress Bar Dot Movement
-        if self.progressBarBackground.window != nil { // Only animate if view is visible
+        // --- 3. Animate Main Progress Bar Dot Movement ---
+        if self.progressBarBackground.window != nil {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
                 self.progressBarBackground.layoutIfNeeded()
             })
         } else {
-            self.progressBarBackground.layoutIfNeeded() // Update immediately if not visible
+            self.progressBarBackground.layoutIfNeeded()
         }
         
-        // --- Update Delta Time Label with Catch Status ---
-        let timeText = String(format: "%.0fs", abs(delta)) // Use absolute for display, status indicates if late
+        // --- 4. Update Delta Time Label with Catch Status ---
+        let timeText = String(format: "%.0fs", abs(delta))
         let uncertaintyText = String(format: "±%.0fs", uncertainty)
-        
-        let statusString: String
+        let statusDescription: String
         if currentCatchStatus == .easy || currentCatchStatus == .hurry {
-            statusString = "\(currentCatchStatus.displayText) · \(timeText) buffer"
+            statusDescription = "\(currentCatchStatus.displayText) · \(timeText) buffer"
         } else if currentCatchStatus == .tough {
-            statusString = "\(currentCatchStatus.displayText) · \(timeText) \(delta < 0 ? "late" : "left")"
-        } else { // MISSED
-            statusString = "\(currentCatchStatus.displayText) · by \(timeText)"
+            statusDescription = "\(currentCatchStatus.displayText) · \(timeText) \(delta < 0 ? "late" : "margin")"
+        } else { 
+            statusDescription = "\(currentCatchStatus.displayText) by \(timeText)"
         }
-
-        let fullText = "\(statusString) (\(uncertaintyText))"
-        
+        let fullText = "\(statusDescription) (\(uncertaintyText))"
         let attributedString = NSMutableAttributedString(string: fullText)
-        
-        // Apply color to the whole string first
         attributedString.addAttribute(.foregroundColor, value: currentCatchStatus.displayColor, range: NSRange(location: 0, length: attributedString.length))
-        
-        // Optionally, add icon
         if let iconName = currentCatchStatus.systemIconName, let iconImage = UIImage(systemName: iconName) {
             let imageAttachment = NSTextAttachment()
             let tintedImage = iconImage.withTintColor(currentCatchStatus.displayColor, renderingMode: .alwaysOriginal)
             imageAttachment.image = tintedImage
-            let imageSize = deltaTimeLabel.font.pointSize
-            imageAttachment.bounds = CGRect(x: 0, y: -2, width: imageSize, height: imageSize) // Adjust y for vertical alignment
-            
+            let imageSize = deltaTimeLabel.font.pointSize * 0.95
+            let fontDescender = deltaTimeLabel.font.descender
+            imageAttachment.bounds = CGRect(x: 0, y: fontDescender + (deltaTimeLabel.font.lineHeight - imageSize) / 2 - fontDescender, width: imageSize, height: imageSize)
             let imageAttrString = NSAttributedString(attachment: imageAttachment)
             attributedString.insert(imageAttrString, at: 0)
-            attributedString.insert(NSAttributedString(string: " "), at: 1) // Space after icon
+            attributedString.insert(NSAttributedString(string: " "), at: 1)
         }
         deltaTimeLabel.attributedText = attributedString
-
-        // --- Haptic Feedback for Significant Status Changes ---
+        
+        // --- 5. Haptic Feedback for Significant Status Changes ---
         if let previousStatus = previousCatchStatus, previousStatus != currentCatchStatus {
-            // Only provide haptic if it's a significant improvement or degradation
             let improvement = (previousStatus == .tough && (currentCatchStatus == .hurry || currentCatchStatus == .easy)) ||
                               (previousStatus == .hurry && currentCatchStatus == .easy)
             let degradation = (previousStatus == .easy && (currentCatchStatus == .hurry || currentCatchStatus == .tough)) ||
                               (previousStatus == .hurry && currentCatchStatus == .tough) ||
-                              (previousStatus != .missed && currentCatchStatus == .missed) // Becoming missed
-
+                              (previousStatus != .missed && currentCatchStatus == .missed)
             if improvement {
-                let feedbackGenerator = UINotificationFeedbackGenerator()
-                feedbackGenerator.prepare()
-                feedbackGenerator.notificationOccurred(.success)
+                let feedbackGenerator = UINotificationFeedbackGenerator(); feedbackGenerator.prepare(); feedbackGenerator.notificationOccurred(.success)
             } else if degradation {
-                let feedbackGenerator = UINotificationFeedbackGenerator()
-                feedbackGenerator.prepare()
-                feedbackGenerator.notificationOccurred(.warning)
+                let feedbackGenerator = UINotificationFeedbackGenerator(); feedbackGenerator.prepare(); feedbackGenerator.notificationOccurred(.warning)
             }
         }
         self.previousCatchStatus = currentCatchStatus
+
+        // --- 6. Update Moving Dot on Active Transit Card's Timeline ---
+        if case .onTrain(let legIndex) = phase, legIndex == self.currentActiveTransitLegIndex {
+            if let activeCard = self.activeJourneySegmentCard,
+               let timelineView = activeCard.viewWithTag(timelineViewTag) as? TimelineView,
+               let startRefLabel = activeCard.viewWithTag(timelineStartLabelTag) as? UILabel,
+               let endRefLabel = activeCard.viewWithTag(timelineEndLabelTag) as? UILabel {
+
+                // Ensure movingDot is correctly parented and its Y constraint is accessible
+                if self.movingDot.superview != timelineView {
+                    print("[ProgressUpdate] Moving dot was not on the correct timeline. Re-setting for leg \(legIndex).")
+                    self.setupMovingDot(attachedTo: timelineView, in: activeCard)
+                }
+                
+                // Calculate Y position for the movingDot on the timeline
+                let startYInTimeline = startRefLabel.convert(CGPoint(x: 0, y: startRefLabel.bounds.midY), to: timelineView).y
+                let endYInTimeline = endRefLabel.convert(CGPoint(x: 0, y: endRefLabel.bounds.midY), to: timelineView).y
+                let travelDistanceOnTimeline = endYInTimeline - startYInTimeline
+                
+                if travelDistanceOnTimeline > 0 { // Avoid division by zero or negative travel
+                    let clampedPhaseProgress = min(max(phaseProgress, 0), 1)
+                    let dotYPosition = startYInTimeline + (travelDistanceOnTimeline * CGFloat(clampedPhaseProgress))
+                    
+                    self.dotCenterYConstraint?.constant = dotYPosition
+                    
+                    if timelineView.window != nil {
+                        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveLinear, .beginFromCurrentState], animations: {
+                            timelineView.layoutIfNeeded()
+                        })
+                    } else {
+                        timelineView.layoutIfNeeded()
+                    }
+                }
+            }
+        }
     }
     
     func journeyPhaseDidChange(_ phase: ProgressPhase) {
         print("RouteSummaryVC: Journey phase changed to: \(phase)")
-        if phase == .walkToStation {
-            self.hasReachedStationVisualCue = false // Reset for next walk segment if any
-            self.previousCatchStatus = nil // Reset for haptics
-            if CLLocationManager.locationServicesEnabled() {
-                switch locationManager.authorizationStatus {
-                case .authorizedWhenInUse, .authorizedAlways:
-                    locationManager.startUpdatingLocation()
-                    print("Location updates started for walkToStation phase.")
-                default:
-                    print("Location access not granted, cannot start updates for walkToStation.")
-                }
-            }
-        } else {
-            locationManager.stopUpdatingLocation() // Stop GPS if not in a walking phase that needs it
-            print("Location updates stopped for phase: \(phase).")
-        }
         
-        // TODO: Implement highlighting of the current journey segment card in the stackView
-        // This would involve:
-        // 1. Identifying which card in `stackView.arrangedSubviews` corresponds to the current `phase`.
-        // 2. Animating visual changes (e.g., scale, shadow, border) to highlight it and de-highlight others.
+        // 1. De-highlight previously active card
+        if let oldActiveCard = self.activeJourneySegmentCard {
+            UIView.animate(withDuration: 0.3, animations: {
+                oldActiveCard.transform = .identity
+                oldActiveCard.backgroundColor = .systemBackground
+                oldActiveCard.layer.shadowOpacity = 0.08
+                oldActiveCard.layer.borderColor = UIColor.clear.cgColor
+                oldActiveCard.layer.borderWidth = 0
+                
+                // Reset text colors
+                oldActiveCard.subviews.forEach { view in
+                    if let stack = view as? UIStackView {
+                        stack.arrangedSubviews.forEach { subview in
+                            if let label = subview as? UILabel {
+                                label.textColor = label.tag == 1 ? .label : .secondaryLabel // tag 1 for title, others for subtitle
+                            }
+                        }
+                    }
+                }
+            })
+        }
+        self.activeJourneySegmentCard = nil
+        self.currentActiveTransitLegIndex = nil
+        self.movingDot.removeFromSuperview()
+
+        var newActiveCardView: UIView? = nil
+        var legIndexOfNewActiveTrainCard: Int? = nil
+
+        // 2. Determine and highlight new active card & setup moving dot
+        switch phase {
+        case .walkToStation:
+            self.hasReachedStationVisualCue = false
+            self.previousCatchStatus = nil
+            startLocationUpdatesIfNeeded()
+            newActiveCardView = stackView.arrangedSubviews.first(where: { $0.tag == walkToStationCardTag })
+            if newActiveCardView == nil {
+                print("Debug: Walk to Station card with tag \(walkToStationCardTag) not found.")
+                newActiveCardView = stackView.arrangedSubviews.first
+            }
+            
+        case .stationToPlatform:
+            stopLocationUpdates()
+            newActiveCardView = stackView.arrangedSubviews.first(where: { $0.tag == stationToPlatformCardTag })
+            if newActiveCardView == nil {
+                print("Debug: Station to Platform card with tag \(stationToPlatformCardTag) not found.")
+            }
+
+        case .onTrain(let legIndex):
+            stopLocationUpdates()
+            legIndexOfNewActiveTrainCard = legIndex
+            if let card = stackView.arrangedSubviews.first(where: { $0.tag == transitCardBaseTag + legIndex }) {
+                newActiveCardView = card
+                if let timelineView = card.viewWithTag(timelineViewTag) as? TimelineView {
+                    setupMovingDot(attachedTo: timelineView, in: card)
+                } else {
+                    print("Error: Could not find TimelineView (tag \(timelineViewTag)) in active train card for leg \(legIndex)")
+                }
+            } else {
+                print("Error: Could not find active train card for leg \(legIndex) with tag \(transitCardBaseTag + legIndex)")
+            }
+            
+        case .transferWalk(let afterLegIndex):
+            startLocationUpdatesIfNeeded()
+            if let transferCard = stackView.arrangedSubviews.first(where: { $0.tag == transitCardBaseTag + afterLegIndex + 1 }) {
+                newActiveCardView = transferCard
+            }
+
+        case .walkToDestination:
+            startLocationUpdatesIfNeeded()
+            newActiveCardView = stackView.arrangedSubviews.first(where: { $0.tag == walkToDestinationCardTag })
+            if newActiveCardView == nil {
+                print("Debug: Walk to Destination card with tag \(walkToDestinationCardTag) not found.")
+                newActiveCardView = stackView.arrangedSubviews.last
+            }
+
+        case .finished:
+            stopLocationUpdates()
+            self.movingDot.removeFromSuperview()
+        }
+
+        // 3. Apply highlight to the new active card (if any)
+        if let cardToHighlight = newActiveCardView {
+            self.activeJourneySegmentCard = cardToHighlight
+            self.currentActiveTransitLegIndex = legIndexOfNewActiveTrainCard
+            
+            UIView.animate(withDuration: 0.35, delay: 0.05, options: .curveEaseOut, animations: {
+                cardToHighlight.transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
+                cardToHighlight.backgroundColor = AppColors.highlightYellow
+                cardToHighlight.layer.shadowOpacity = 0.15
+                cardToHighlight.layer.shadowRadius = 12
+                
+                // Update text colors
+                cardToHighlight.subviews.forEach { view in
+                    if let stack = view as? UIStackView {
+                        stack.arrangedSubviews.forEach { subview in
+                            if let label = subview as? UILabel {
+                                label.textColor = AppColors.highlightText
+                            }
+                        }
+                    }
+                }
+                
+                // Scroll to make the active card visible
+                let cardFrameInScrollView = self.scrollView.convert(cardToHighlight.frame, from: self.stackView)
+                var visibleRect = cardFrameInScrollView
+                visibleRect.origin.y -= 20
+                visibleRect.size.height += 40
+                self.scrollView.scrollRectToVisible(visibleRect, animated: true)
+            })
+        }
+    }
+    
+    private func startLocationUpdatesIfNeeded() {
+        if CLLocationManager.locationServicesEnabled() {
+            switch locationManager.authorizationStatus {
+            case .authorizedWhenInUse, .authorizedAlways:
+                locationManager.startUpdatingLocation()
+                print("Location updates started.")
+            default:
+                print("Location access not granted, cannot start updates.")
+            }
+        }
+    }
+    
+    private func stopLocationUpdates() {
+        locationManager.stopUpdatingLocation()
+        print("Location updates stopped.")
     }
 }
 
 // MARK: - Timeline View (Keep as is)
-class TimelineView: UIView {
-    var lineColor: UIColor = .white {
-        didSet { setNeedsDisplay() }
-    }
-    override func draw(_ rect: CGRect) {
-        guard let context = UIGraphicsGetCurrentContext() else { return }
-        context.setLineWidth(2)
-        context.setStrokeColor(lineColor.cgColor)
-        let centerX = rect.width / 2
-        context.move(to: CGPoint(x: centerX, y: 0))
-        context.addLine(to: CGPoint(x: centerX, y: rect.height))
-        context.strokePath()
-    }
-}
 
 // MARK: - Color Extension (Keep as is)
 extension UIColor {
@@ -883,3 +1097,4 @@ class PaddingLabel: UILabel {
                       height: size.height + insets.top + insets.bottom)
     }
 }
+

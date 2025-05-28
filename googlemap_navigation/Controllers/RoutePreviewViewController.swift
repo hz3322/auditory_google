@@ -176,9 +176,6 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
                    self.topRouteLabel.text = "Route Preview"
                }
             
-
-            
-            
             // set bottomEstimatedLabel content
             let formattedTime = String(format: "%.0f", totalTime)
             self.bottomEstimatedLabel.text = "Estimated time: \(formattedTime) min"

@@ -17,7 +17,9 @@ protocol JourneyProgressDelegate: AnyObject {
 enum ProgressPhase: Equatable {
     case walkToStation
     case stationToPlatform
+    case onTrain(legIndex: Int)
     case transferWalk(index: Int)
+    case walkToDestination
     case finished
 }
 
