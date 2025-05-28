@@ -354,12 +354,39 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         ])
     }
     
+    func normalizeStationName(_ name: String) -> String {
+        return name
+            .lowercased()
+            .replacingOccurrences(of: " underground station", with: "")
+            .replacingOccurrences(of: " station", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
     // tracking user's real time progress through their planned journey - init journey progress Service
     private func setupProgressService() {
         guard let firstTransitInfo = transitInfos.first,
-              let departureStationName = firstTransitInfo.departureStation,
-              let stationData = stationCoordinates[departureStationName] else {
-            print("Error: Cannot setup ProgressService - missing transit info (departureStation) or stationCoordinates for \(transitInfos.first?.departureStation ?? "Unknown Station").")
+              let departureStationName = firstTransitInfo.departureStation else {
+            print("Error: Cannot setup ProgressService - missing transit info (departureStation)")
+            deltaTimeLabel.text = "Route data incomplete."
+            deltaTimeLabel.textColor = .systemRed
+            return
+        }
+
+        let normalizedKey = normalizeStationName(departureStationName)
+        var stationData = stationCoordinates[normalizedKey]
+
+        // If not found, try fuzzy match
+        if stationData == nil {
+            // Try to find a key that CONTAINS the normalized name
+            if let fuzzyKey = stationCoordinates.keys.first(where: { normalizeStationName($0) == normalizedKey || $0.lowercased().contains(normalizedKey) }) {
+                stationData = stationCoordinates[fuzzyKey]
+                print("Fuzzy match for station coordinate: \(fuzzyKey)")
+            }
+        }
+
+        guard let stationData = stationData else {
+            print("Error: Cannot setup ProgressService - missing stationCoordinates for \(departureStationName) (normalized: \(normalizedKey))")
+            print("Available stationCoordinate keys: \(stationCoordinates.keys)")
             deltaTimeLabel.text = "Route data incomplete."
             deltaTimeLabel.textColor = .systemRed
             return
@@ -397,9 +424,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 self.walkToStationTimeSec = minutesDouble * 60.0
             }
         }
-
-        // Setup progress service ONLY after station data is loaded
-        setupProgressService()
 
         stackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
         var viewsToAdd: [UIView] = []
@@ -460,8 +484,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 }
                 
                 // 2. Fetch Arrivals
-                
-                TfLDataService.shared.fetchAllArrivals(for: naptanId) { allArrivals in
+                TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: [lineId]) { allArrivals in
                     DispatchQueue.main.async {
                         // 1. Clear previous rows (except the title)
                         strongCatchSectionView.arrangedSubviews
@@ -507,7 +530,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                             top3 = Array(catchInfos.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }.prefix(3))
                         }
 
-                        // 5. Update ProgressService’s next target (only for the first segment)
+                        // 5. Update ProgressService's next target (only for the first segment)
                         if index == 0 {
                             if let firstTrain = top3.first(where: { $0.catchStatus != .missed }) ?? top3.first {
                                 self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
@@ -841,6 +864,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         ])
         movingDot.alpha = 0 // Start hidden
         UIView.animate(withDuration: 0.3, delay: 0.1) { self.movingDot.alpha = 1 } // Fade in
+    }
+
+    private func loadStationCoordinates(completion: @escaping () -> Void) {
+        RouteLogic.shared.loadAllTubeStations { [weak self] stationsDict in
+            // Convert [String: StationMeta] to [String: CLLocationCoordinate2D]
+            self?.stationCoordinates = stationsDict.mapValues { $0.coord }
+            DispatchQueue.main.async {
+                completion()
+            }
+        }
     }
 }
 

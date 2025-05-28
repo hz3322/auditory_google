@@ -50,25 +50,37 @@ class TfLDataService {
         }.resume()
     }
     
-    func fetchAllArrivals(for naptanId: String, completion: @escaping ([TfLArrivalPrediction]) -> Void) {
-        fetchAvailableLines(for: naptanId) { lineIds in
+    func fetchAllArrivals(for naptanId: String, relevantLineIds: [String]?, completion: @escaping ([TfLArrivalPrediction]) -> Void) {
+        fetchAvailableLines(for: naptanId) { allAvailableLineIdsAtStation in
+               let linesToFetch = relevantLineIds ?? allAvailableLineIdsAtStation
+               // Potentially filter linesToFetch further if relevantLineIds were provided
+               // to ensure they are actually available at this station
+               let finalLineIds = relevantLineIds != nil ? allAvailableLineIdsAtStation.filter { linesToFetch.contains($0) } : linesToFetch
+            
             let group = DispatchGroup()
             var allArrivals: [TfLArrivalPrediction] = []
-            for lineId in lineIds {
-                group.enter()
-                TfLDataService.shared.fetchTrainArrivals(lineId: lineId, stationNaptanId: naptanId) { result in
-                    if case .success(let arrivals) = result {
-                        allArrivals.append(contentsOf: arrivals)
-                    }
-                    group.leave()
-                }
-            }
+            for lineId in finalLineIds { // Use the filtered list
+                       group.enter()
+                       TfLDataService.shared.fetchTrainArrivals(lineId: lineId, stationNaptanId: naptanId) { result in
+                           if case .success(let arrivals) = result {
+                               allArrivals.append(contentsOf: arrivals)
+                           }
+                           group.leave()
+                       }
+                   }
             group.notify(queue: .main) {
                 completion(allArrivals)
             }
         }
     }
     
+    func normalizeStationName(_ name: String) -> String {
+        return name
+            .lowercased()
+            .replacingOccurrences(of: " underground station", with: "")
+            .replacingOccurrences(of: " station", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     
     func fetchAllTubeStationIds(completion: @escaping () -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/Mode/tube"
@@ -90,7 +102,7 @@ class TfLDataService {
             for stop in stops {
                 if let name = stop["commonName"] as? String,
                    let id = stop["naptanId"] as? String { // Use naptanId for arrivals
-                    dict[name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)] = id // Store lowercased for easier lookup
+                    dict[normalizeStationName(name)] = id // Store lowercased for easier lookup
                 }
             }
             self.stationIdMap = dict
@@ -102,9 +114,8 @@ class TfLDataService {
     }
     
 
-    // Enhanced tflStationId: Uses pre-fetched map, can be extended with API search later if needed.
     func resolveStationId(for stationName: String, completion: @escaping (String?) -> Void) {
-        let cleanedName = stationName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedName = normalizeStationName(stationName)
         
         // 1. Try exact match from pre-fetched map
         if let id = self.stationIdMap[cleanedName] {
@@ -122,8 +133,6 @@ class TfLDataService {
             }
         }
 
-        // 3. OPTIONAL Fallback: API Search (similar to your StationIdResolver)
-        // This makes an extra API call if not found in the pre-fetched list.
         print("[TfLDataService] Station ID for '\(stationName)' not in cache, attempting API search...")
         let query = stationName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? stationName
         let searchUrlStr = "https://api.tfl.gov.uk/StopPoint/Search?query=\(query)&modes=tube&app_key=\(APIKeys.tflAppKey)"
