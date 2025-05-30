@@ -227,7 +227,7 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     }
 
     private func loadStationCoordinates() {
-        RouteLogic.shared.loadAllTubeStations { [weak self] stationsDict in
+       TfLDataService.shared.loadAllTubeStations { [weak self] stationsDict in
             self?.stationCoordinates = stationsDict
             self?.addMarkersAndPolylines()
         }

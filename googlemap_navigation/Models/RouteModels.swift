@@ -75,9 +75,6 @@ public struct TransitInfo {
         lineColorHex: String?,
         delayStatus: String?,
         
-//        walkToStationSec: Double?,
-//        stationToPlatformSec: Double?
-        
     ) {
         self.lineName = lineName
         self.departureStation = departureStation
@@ -114,10 +111,4 @@ public struct TransitInfo {
             return platformTime.timeIntervalSince(entranceTime)
         }
     }
-
-public struct StationMeta {
-    let id: String                // TfL StopPointId (比如 940GZZLUOXC)
-    let coord: CLLocationCoordinate2D
-}
-
 

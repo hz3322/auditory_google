@@ -24,8 +24,8 @@ public final class RouteLogic {
             _ walkToDestinationMin: Double
         ) -> Void
     ) {
-        loadAllTubeStations { stationsDict in
-            guard let nearestStationName = self.nearestStation(to: userLocation, from: stationsDict),
+        TfLDataService.shared.loadAllTubeStations { stationsDict in
+            guard let nearestStationName = TfLDataService.shared.findNearestStation(to: userLocation, from: stationsDict),
                   let nearestStationCoord = stationsDict[nearestStationName] else {
                 completion([], [], 0.0, [], 0.0, 0.0)
                 return
@@ -71,7 +71,7 @@ public final class RouteLogic {
                         updatedSegments[index].arrivalCoordinate = endCoord
                         
                         group.enter()
-                        self.fetchJourneyPlannerStops(fromCoord: startCoord, toCoord: endCoord) { stops in
+                        TfLDataService.shared.fetchJourneyPlannerStops(fromCoord: startCoord, toCoord: endCoord) { stops in
                             var updated = seg
                             
                             if stops.contains(where: { $0.lowercased().contains("bus") }) {
@@ -207,82 +207,6 @@ public final class RouteLogic {
         return (walkMin, transitMin, walkSteps, transitInfos)
     }
     
-    // MARK: - TfL API Integration
-    
-    func fetchJourneyPlannerStops(fromCoord: CLLocationCoordinate2D, toCoord: CLLocationCoordinate2D, completion: @escaping ([String]) -> Void) {
-        let fromStr = "\(fromCoord.latitude),\(fromCoord.longitude)"
-        let toStr = "\(toCoord.latitude),\(toCoord.longitude)"
-        let urlStr = "https://api.tfl.gov.uk/Journey/JourneyResults/\(fromStr)/to/\(toStr)?mode=tube&app_key=0bc9522b0b77427eb20e858550d6a072"
-        
-        guard let url = URL(string: urlStr) else {
-            completion([])
-            return
-        }
-        
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            var result: [String] = []
-            defer { DispatchQueue.main.async { completion(result) } }
-            
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let journeys = json["journeys"] as? [[String: Any]],
-                  let legs = journeys.first?["legs"] as? [[String: Any]] else {
-                return
-            }
-            
-            for leg in legs where (leg["mode"] as? [String: Any])?["id"] as? String == "tube" {
-                if let path = leg["path"] as? [String: Any],
-                   let stops = path["stopPoints"] as? [[String: Any]] {
-                    let names = stops.compactMap { $0["name"] as? String }
-                    result.append(contentsOf: names)
-                }
-            }
-        }.resume()
-    }
-    
-    func loadAllTubeStations(completion: @escaping ([String: StationMeta]) -> Void) {
-        let urlStr = "https://api.tfl.gov.uk/StopPoint/Mode/tube"
-        guard let url = URL(string: urlStr) else {
-            completion([:])
-            return
-        }
-        
-        URLSession.shared.dataTask(with: url) { data, _, error in
-            guard error == nil, let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let stopPoints = json["stopPoints"] as? [[String: Any]] else {
-                completion([:])
-                return
-            }
-            
-            var result: [String: StationMeta] = [:]
-            
-            for stop in stopPoints {
-                if let name = stop["commonName"] as? String,
-                   let id = stop["naptanId"] as? String,
-                   let lat = stop["lat"] as? CLLocationDegrees,
-                   let lon = stop["lon"] as? CLLocationDegrees {
-                    let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                    result[name] = StationMeta(id: id, coord: coord)
-                }
-            }
-            
-            DispatchQueue.main.async {
-                self.stationsDict = result
-                completion(result)
-            }
-        }.resume()
-    }
-    
-    func nearestStation(to location: CLLocation, from stations: [String: StationMeta]) -> String? {
-        let closest = stations.min { lhs, rhs in
-            let lhsLoc = CLLocation(latitude: lhs.value.coord.latitude, longitude: lhs.value.coord.longitude)
-            let rhsLoc = CLLocation(latitude: rhs.value.coord.latitude, longitude: rhs.value.coord.longitude)
-            return location.distance(from: lhsLoc) < location.distance(from: rhsLoc)
-        }
-        return closest?.key
-    }
-    
     // MARK: - Navigation
     
     func navigateToSummary(
@@ -309,43 +233,6 @@ public final class RouteLogic {
         
         summaryVC.transitInfos = transitInfos
         viewController.navigationController?.pushViewController(summaryVC, animated: true)
-    }
-    
-    func tflStationId(from stationName: String) -> String? {
-        return stationsDict[stationName]?.id
-    }
-    
-    func tflLineId(from lineName: String) -> String? {
-        let mapping: [String: String] = [
-            "Bakerloo": "bakerloo",
-            "Central": "central",
-            "Circle": "circle",
-            "District": "district",
-            "Hammersmith & City": "hammersmith-city",
-            "Jubilee": "jubilee",
-            "Metropolitan": "metropolitan",
-            "Northern": "northern",
-            "Piccadilly": "piccadilly",
-            "Victoria": "victoria",
-            "Waterloo & City": "waterloo-city",
-            "London Overground": "london-overground",
-            "Elizabeth": "elizabeth",
-            "Elizabeth line": "elizabeth",
-            "TfL Rail": "elizabeth",
-            "DLR": "dlr",
-            "Tram": "tram"
-        ]
-        
-        if let id = mapping[lineName] {
-            return id
-        }
-        let lowercasedName = lineName.lowercased()
-        for (key, value) in mapping {
-            if key.lowercased() == lowercasedName {
-                return value
-            }
-        }
-        return nil
     }
 }
 

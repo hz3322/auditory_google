@@ -475,7 +475,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     return
                 }
                 
-                guard let lineId = RouteLogic.shared.tflLineId(from: lineName) else {
+                guard let lineId = TfLDataService.shared.tflLineId(from: lineName) else {
                     DispatchQueue.main.async {
                         self.addErrorLabel("Line ID not found for \(lineName).", to: strongCatchSectionView)
                         catchTrainCard?.layoutIfNeeded()
@@ -867,7 +867,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 
     private func loadStationCoordinates(completion: @escaping () -> Void) {
-        RouteLogic.shared.loadAllTubeStations { [weak self] stationsDict in
+        TfLDataService.shared.loadAllTubeStations { [weak self] stationsDict in
             // Convert [String: StationMeta] to [String: CLLocationCoordinate2D]
             self?.stationCoordinates = stationsDict.mapValues { $0.coord }
             DispatchQueue.main.async {
