@@ -2,7 +2,6 @@ import Foundation
 import CoreLocation
 import GoogleMaps
 
-
 public final class RouteLogic {
     static let shared = RouteLogic()
     private init() {}
@@ -10,10 +9,8 @@ public final class RouteLogic {
     var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
     var stationsDict: [String: StationMeta] = [:]
     
-    // MARK: - Google Directions API Wrapper
+    // MARK: - Route Fetching
     
-    // Fetches full route including walking and transit segments using Google Directions API,
-    // and augments it with intermediate stop names from TfL Journey Planner (based on nearest stations).
     func fetchRoute(
         from userLocation: CLLocation,
         to destinationCoord: CLLocationCoordinate2D,
@@ -34,195 +31,120 @@ public final class RouteLogic {
                 return
             }
             
-            let urlStr = "https://maps.googleapis.com/maps/api/directions/json?origin=\(userLocation.coordinate.latitude),\(userLocation.coordinate.longitude)&destination=\(destinationCoord.latitude),\(destinationCoord.longitude)&mode=transit&transit_mode=subway|train&region=uk&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
-            
-            guard let url = URL(string: urlStr) else { return }
-            
-            URLSession.shared.dataTask(with: url) { data, _, _ in
-                guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let routes = json["routes"] as? [[String: Any]],
-                      let legs = routes.first?["legs"] as? [[String: Any]],
-                      let steps = legs.first?["steps"] as? [[String: Any]] else {
-                    return
-                }
-                
-                let (_, transitMin, walkSteps, segments) = self.calculateRouteTimes(from: steps)
-                let transitSteps = steps.filter { $0["travel_mode"] as? String == "TRANSIT" }
-                var updatedSegments = segments
-                let group = DispatchGroup()
-                
-                var entryWalkMin: Double? = nil
-                var exitWalkMin: Double? = nil
-                
-                let depCoord = nearestStationCoord.coord  // 取坐标
-                let arrCoord = segments.last?.arrivalCoordinate ?? destinationCoord
-                
-                let dispatch = DispatchGroup()
-                dispatch.enter()
-                self.computeWalkingTime(from: userLocation.coordinate, to: depCoord) { result in
-                    entryWalkMin = result
-                    dispatch.leave()
-                }
-                
-                dispatch.enter()
-                self.computeWalkingTime(from: arrCoord, to: destinationCoord) { result in
-                    exitWalkMin = result
-                    dispatch.leave()
-                }
-                
-                for (index, seg) in segments.enumerated() {
-                    guard index < transitSteps.count,
-                          let startCoord = self.extractCoordinate(from: transitSteps[index], key: "start_location"),
-                          let endCoord = self.extractCoordinate(from: transitSteps[index], key: "end_location") else {
-                        continue
+            GoogleMapsService.shared.fetchTransitRoute(
+                from: userLocation.coordinate,
+                to: destinationCoord
+            ) { result in
+                switch result {
+                case .success(let steps):
+                    let (_, transitMin, walkSteps, segments) = self.calculateRouteTimes(from: steps)
+                    let transitSteps = steps.filter { $0["travel_mode"] as? String == "TRANSIT" }
+                    var updatedSegments = segments
+                    let group = DispatchGroup()
+                    
+                    var entryWalkMin: Double? = nil
+                    var exitWalkMin: Double? = nil
+                    
+                    let depCoord = nearestStationCoord.coord
+                    let arrCoord = segments.last?.arrivalCoordinate ?? destinationCoord
+                    
+                    let dispatch = DispatchGroup()
+                    dispatch.enter()
+                    GoogleMapsService.shared.fetchWalkingTime(from: userLocation.coordinate, to: depCoord) { result in
+                        entryWalkMin = result
+                        dispatch.leave()
                     }
                     
-                    updatedSegments[index].arrivalCoordinate = endCoord
+                    dispatch.enter()
+                    GoogleMapsService.shared.fetchWalkingTime(from: arrCoord, to: destinationCoord) { result in
+                        exitWalkMin = result
+                        dispatch.leave()
+                    }
                     
-                    group.enter()
-                    self.fetchJourneyPlannerStops(fromCoord: startCoord, toCoord: endCoord) { stops in
-                        var updated = seg
-                        
-                        if stops.contains(where: { $0.lowercased().contains("bus") }) {
-                            updated.stopNames = []
-                            updated.numStops = 0
-                            group.leave()
-                            return
+                    for (index, seg) in segments.enumerated() {
+                        guard index < transitSteps.count,
+                              let startCoord = GoogleMapsService.shared.extractCoordinate(from: transitSteps[index], key: "start_location"),
+                              let endCoord = GoogleMapsService.shared.extractCoordinate(from: transitSteps[index], key: "end_location") else {
+                            continue
                         }
                         
-                        if index == 0 {
-                            var extended = stops
-                            if let first = stops.first, first != seg.departureStation {
-                                extended.insert(seg.departureStation ?? "-", at: 0)
+                        updatedSegments[index].arrivalCoordinate = endCoord
+                        
+                        group.enter()
+                        self.fetchJourneyPlannerStops(fromCoord: startCoord, toCoord: endCoord) { stops in
+                            var updated = seg
+                            
+                            if stops.contains(where: { $0.lowercased().contains("bus") }) {
+                                updated.stopNames = []
+                                updated.numStops = 0
+                                group.leave()
+                                return
                             }
-                            updated.stopNames = extended
-                            updated.departureStation = extended.first
-                            updated.arrivalStation = extended.last
-                        } else {
-                            if stops.isEmpty {
-                                updated.stopNames = [updatedSegments[index - 1].arrivalStation ?? "-", seg.arrivalStation ?? "-"]
+                            
+                            if index == 0 {
+                                var extended = stops
+                                if let first = stops.first, first != seg.departureStation {
+                                    extended.insert(seg.departureStation ?? "-", at: 0)
+                                }
+                                updated.stopNames = extended
+                                updated.departureStation = extended.first
+                                updated.arrivalStation = extended.last
                             } else {
-                                updated.stopNames = stops
-                                if updatedSegments[index - 1].arrivalStation != nil {
-                                    updated.stopNames.insert(updatedSegments[index - 1].arrivalStation!, at: 0)
+                                if stops.isEmpty {
+                                    updated.stopNames = [updatedSegments[index - 1].arrivalStation ?? "-", seg.arrivalStation ?? "-"]
+                                } else {
+                                    updated.stopNames = stops
+                                    if updatedSegments[index - 1].arrivalStation != nil {
+                                        updated.stopNames.insert(updatedSegments[index - 1].arrivalStation!, at: 0)
+                                    }
+                                }
+                                updated.departureStation = updated.stopNames.first
+                                updated.arrivalStation = updated.stopNames.last
+                            }
+                            
+                            updated.numStops = max(0, updated.stopNames.count - 1)
+                            
+                            if let times = updated.durationText?.components(separatedBy: " -"), times.count == 2 {
+                                let formatter = DateFormatter()
+                                formatter.dateFormat = "HH:mm"
+                                if let start = formatter.date(from: times[0]), let end = formatter.date(from: times[1]) {
+                                    let minutes = Int(end.timeIntervalSince(start) / 60)
+                                    updated.durationTime = "\(minutes) min"
                                 }
                             }
-                            updated.departureStation = updated.stopNames.first
-                            updated.arrivalStation = updated.stopNames.last
+                            
+                            updatedSegments[index] = updated
+                            group.leave()
                         }
+                    }
+                    
+                    dispatch.notify(queue: .main) {
+                        print("Entry walking time (min):", entryWalkMin ?? -1)
+                        print("Exit walking time (min):", exitWalkMin ?? -1)
                         
-                        updated.numStops = max(0, updated.stopNames.count - 1)
-                        
-                        if let times = updated.durationText?.components(separatedBy: " -"), times.count == 2 {
-                            let formatter = DateFormatter()
-                            formatter.dateFormat = "HH:mm"
-                            if let start = formatter.date(from: times[0]), let end = formatter.date(from: times[1]) {
-                                let minutes = Int(end.timeIntervalSince(start) / 60)
-                                updated.durationTime = "\(minutes) min"
-                            }
+                        group.notify(queue: .main) {
+                            let adjTime = (entryWalkMin ?? 0.0) + (exitWalkMin ?? 0.0) + transitMin
+                            completion(
+                                walkSteps,
+                                updatedSegments,
+                                adjTime,
+                                steps,
+                                entryWalkMin ?? 0.0,
+                                exitWalkMin ?? 0.0
+                            )
                         }
-                        
-                        updatedSegments[index] = updated
-                        group.leave()
                     }
-                }
-                
-                dispatch.notify(queue: .main) {
-                    print("Entry walking time (min):", entryWalkMin ?? -1)
-                    print("Exit walking time (min):", exitWalkMin ?? -1)
                     
-                    
-                    group.notify(queue: .main) {
-                        let adjTime = (entryWalkMin ?? 0.0) + (exitWalkMin ?? 0.0) + transitMin
-                        completion(
-                            walkSteps,
-                            updatedSegments,
-                            adjTime,
-                            steps,
-                            entryWalkMin ?? 0.0,
-                            exitWalkMin ?? 0.0
-                        )
-                    }
+                case .failure(let error):
+                    print("[RouteLogic] Failed to fetch route: \(error)")
+                    completion([], [], 0.0, [], 0.0, 0.0)
                 }
-            }.resume()
-        }
-    }
-    
-    
-    
-    private func extractCoordinate(from step: [String: Any], key: String) -> CLLocationCoordinate2D? {
-        if let location = step[key] as? [String: Any],
-           let lat = location["lat"] as? Double,
-           let lng = location["lng"] as? Double {
-            // Round coordinates to 6 decimal places for better matching
-            let roundedLat = round(lat * 1000000) / 1000000
-            let roundedLng = round(lng * 1000000) / 1000000
-            return CLLocationCoordinate2D(latitude: roundedLat, longitude: roundedLng)
-        }
-        return nil
-    }
-    
-    
-    
-    func tflLineId(from lineName: String) -> String? {
-        let mapping: [String: String] = [
-            "Bakerloo": "bakerloo",
-            "Central": "central",
-            "Circle": "circle",
-            "District": "district",
-            "Hammersmith & City": "hammersmith-city",
-            "Jubilee": "jubilee",
-            "Metropolitan": "metropolitan",
-            "Northern": "northern",
-            "Piccadilly": "piccadilly",
-            "Victoria": "victoria",
-            "Waterloo & City": "waterloo-city",
-            "London Overground": "london-overground",
-            "Elizabeth": "elizabeth",
-            "Elizabeth line": "elizabeth",
-            "TfL Rail": "elizabeth",
-            "DLR": "dlr",
-            "Tram": "tram"
-        ]
-        
-        if let id = mapping[lineName] {
-            return id
-        }
-        let lowercasedName = lineName.lowercased()
-        for (key, value) in mapping {
-            if key.lowercased() == lowercasedName {
-                return value
             }
         }
-        return nil
     }
     
-    func computeWalkingTime(from start: CLLocationCoordinate2D, to end: CLLocationCoordinate2D, completion: @escaping (Double?) -> Void) {
-        let urlStr = "https://maps.googleapis.com/maps/api/directions/json?origin=\(start.latitude),\(start.longitude)&destination=\(end.latitude),\(end.longitude)&mode=walking&key=AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
-        
-        guard let url = URL(string: urlStr) else {
-            completion(nil)
-            return
-        }
-        
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let routes = json["routes"] as? [[String: Any]],
-                  let legs = routes.first?["legs"] as? [[String: Any]],
-                  let duration = legs.first?["duration"] as? [String: Any],
-                  let value = duration["value"] as? Double else {
-                completion(nil)
-                return
-            }
-            
-            completion(value / 60.0) // in minutes
-        }.resume()
-    }
+    // MARK: - Route Processing
     
-    
-    // Parses Google steps into walk + transit models
     func calculateRouteTimes(from steps: [[String: Any]]) -> (Double, Double, [WalkStep], [TransitInfo]) {
         var walkMin = 0.0, transitMin = 0.0
         var walkSteps: [WalkStep] = []
@@ -269,18 +191,14 @@ public final class RouteLogic {
                         departureStation: dep["name"] as? String ?? "-",
                         arrivalStation: arr["name"] as? String ?? "-",
                         durationText: durationText,
-                        
                         departurePlatform: td["departure_platform"] as? String,
                         arrivalPlatform: td["arrival_platform"] as? String,
-                        departureCoordinate: self.extractCoordinate(from: step, key: "start_location"),
-                        arrivalCoordinate: self.extractCoordinate(from: step, key: "end_location"),
-                        
+                        departureCoordinate: GoogleMapsService.shared.extractCoordinate(from: step, key: "start_location"),
+                        arrivalCoordinate: GoogleMapsService.shared.extractCoordinate(from: step, key: "end_location"),
                         crowdLevel: crowd,
                         numStops: td["num_stops"] as? Int,
                         lineColorHex: line["color"] as? String,
                         delayStatus: delayStatus
-                        
-//                        walkToStationSec: <#T##Double?#>
                     )
                     transitInfos.append(info)
                 }
@@ -289,7 +207,7 @@ public final class RouteLogic {
         return (walkMin, transitMin, walkSteps, transitInfos)
     }
     
-    // MARK: - TfL API: Stop / Coordinates / Matching
+    // MARK: - TfL API Integration
     
     func fetchJourneyPlannerStops(fromCoord: CLLocationCoordinate2D, toCoord: CLLocationCoordinate2D, completion: @escaping ([String]) -> Void) {
         let fromStr = "\(fromCoord.latitude),\(fromCoord.longitude)"
@@ -322,7 +240,6 @@ public final class RouteLogic {
         }.resume()
     }
     
-    // Loads all tube stations from TfL and builds a dictionary [name: coordinate]
     func loadAllTubeStations(completion: @escaping ([String: StationMeta]) -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/Mode/tube"
         guard let url = URL(string: urlStr) else {
@@ -351,12 +268,12 @@ public final class RouteLogic {
             }
             
             DispatchQueue.main.async {
-                self.stationsDict = result // 存全局
+                self.stationsDict = result
                 completion(result)
             }
         }.resume()
     }
-    // Returns the name of the station closest to a given location.
+    
     func nearestStation(to location: CLLocation, from stations: [String: StationMeta]) -> String? {
         let closest = stations.min { lhs, rhs in
             let lhsLoc = CLLocation(latitude: lhs.value.coord.latitude, longitude: lhs.value.coord.longitude)
@@ -366,36 +283,8 @@ public final class RouteLogic {
         return closest?.key
     }
     
-    // Fetches coordinates for all stops of a TfL line
-    func fetchStopCoordinates(for lineId: String, direction: String, completion: @escaping ([String: StationMeta]) -> Void) {
-        let urlStr = "https://api.tfl.gov.uk/Line/\(lineId)/Route/Sequence/\(direction)"
-        guard let url = URL(string: urlStr) else { return }
-        
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let sequences = json["stopPointSequences"] as? [[String: Any]],
-                  let first = sequences.first,
-                  let stops = first["stopPoint"] as? [[String: Any]] else {
-                return
-            }
-            
-            var result: [String: StationMeta] = [:]
-            for stop in stops {
-                if let name = stop["name"] as? String,
-                   let id = stop["id"] as? String,
-                   let lat = stop["lat"] as? CLLocationDegrees,
-                   let lon = stop["lon"] as? CLLocationDegrees {
-                    result[name] = StationMeta(id: id, coord: CLLocationCoordinate2D(latitude: lat, longitude: lon))
-                }
-            }
-            DispatchQueue.main.async {
-                completion(result)
-            }
-        }.resume()
-    }
+    // MARK: - Navigation
     
-    // Launches the summary screen with parsed transit info
     func navigateToSummary(
         from viewController: UIViewController,
         transitInfos: [TransitInfo],
@@ -410,7 +299,6 @@ public final class RouteLogic {
         summaryVC.walkToStationTime = String(format: "%.0f min", walkToStationMin)
         summaryVC.walkToDestinationTime = String(format: "%.0f min", walkToDestinationMin)
         
-        // 处理顶部时间（比如 "12:10 → 12:52"）
         if let durationText = transitInfos.first?.durationText {
             let parts = durationText.components(separatedBy: " -")
             if parts.count == 2 {
@@ -426,9 +314,40 @@ public final class RouteLogic {
     func tflStationId(from stationName: String) -> String? {
         return stationsDict[stationName]?.id
     }
-}
     
-//}
+    func tflLineId(from lineName: String) -> String? {
+        let mapping: [String: String] = [
+            "Bakerloo": "bakerloo",
+            "Central": "central",
+            "Circle": "circle",
+            "District": "district",
+            "Hammersmith & City": "hammersmith-city",
+            "Jubilee": "jubilee",
+            "Metropolitan": "metropolitan",
+            "Northern": "northern",
+            "Piccadilly": "piccadilly",
+            "Victoria": "victoria",
+            "Waterloo & City": "waterloo-city",
+            "London Overground": "london-overground",
+            "Elizabeth": "elizabeth",
+            "Elizabeth line": "elizabeth",
+            "TfL Rail": "elizabeth",
+            "DLR": "dlr",
+            "Tram": "tram"
+        ]
+        
+        if let id = mapping[lineName] {
+            return id
+        }
+        let lowercasedName = lineName.lowercased()
+        for (key, value) in mapping {
+            if key.lowercased() == lowercasedName {
+                return value
+            }
+        }
+        return nil
+    }
+}
 
    
 
