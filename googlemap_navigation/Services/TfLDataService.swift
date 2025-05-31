@@ -176,27 +176,43 @@ public final class TfLDataService {
     /// Resolves any (possibly fuzzy) station name to a naptanId, first checking local cache, then using API if needed.
     func resolveStationId(for stationName: String, completion: @escaping (String?) -> Void) {
         let cleanedName = normalizeStationName(stationName)
+        print("[TfLDataService] Resolving station ID for: \(stationName) (cleaned: \(cleanedName))")
         if let id = self.stationIdMap[cleanedName] {
+            print("[TfLDataService] Found station ID in cache: \(id)")
             completion(id); return
         }
         for (key, value) in self.stationIdMap {
             if key.contains(cleanedName) {
+                print("[TfLDataService] Found station ID through fuzzy match: \(value)")
                 completion(value); return
             }
         }
         // As a last resort, query the API live:
         let query = stationName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? stationName
         let searchUrlStr = "https://api.tfl.gov.uk/StopPoint/Search?query=\(query)&modes=tube&app_key=\(APIKeys.tflAppKey)"
-        guard let searchUrl = URL(string: searchUrlStr) else { completion(nil); return }
-        URLSession.shared.dataTask(with: searchUrl) { [weak self] data, _, error in
+        print("[TfLDataService] Querying TfL API for station ID: \(searchUrlStr)")
+        guard let searchUrl = URL(string: searchUrlStr) else { 
+            print("[TfLDataService] Failed to create URL for station search")
+            completion(nil); return 
+        }
+        URLSession.shared.dataTask(with: searchUrl) { [weak self] data, response, error in
             guard let self = self else { completion(nil); return }
+            if let error = error {
+                print("[TfLDataService] Error fetching station ID: \(error)")
+                completion(nil); return
+            }
+            if let httpResponse = response as? HTTPURLResponse {
+                print("[TfLDataService] Station search response status: \(httpResponse.statusCode)")
+            }
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let matches = json["matches"] as? [[String: Any]],
                   let firstMatch = matches.first,
                   let id = firstMatch["naptanId"] as? String ?? firstMatch["id"] as? String else {
+                print("[TfLDataService] Failed to parse station search response")
                 completion(nil); return
             }
+            print("[TfLDataService] Successfully found station ID from API: \(id)")
             self.stationIdMap[cleanedName] = id
             completion(id)
         }.resume()
@@ -207,8 +223,19 @@ public final class TfLDataService {
     /// Fetches available line IDs for a station by naptanId
     func fetchAvailableLines(for naptanId: String, completion: @escaping ([String]) -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/\(naptanId)"
-        guard let url = URL(string: urlStr) else { completion([]); return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
+        print("[TfLDataService] Fetching available lines for station: \(naptanId)")
+        guard let url = URL(string: urlStr) else { 
+            print("[TfLDataService] Failed to create URL for line fetch")
+            completion([]); return 
+        }
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error {
+                print("[TfLDataService] Error fetching available lines: \(error)")
+                completion([]); return
+            }
+            if let httpResponse = response as? HTTPURLResponse {
+                print("[TfLDataService] Line fetch response status: \(httpResponse.statusCode)")
+            }
             var result: [String] = []
             if let data = data,
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -218,6 +245,9 @@ public final class TfLDataService {
                         result.append(id)
                     }
                 }
+                print("[TfLDataService] Found \(result.count) available lines: \(result)")
+            } else {
+                print("[TfLDataService] Failed to parse available lines response")
             }
             DispatchQueue.main.async { completion(result) }
         }.resume()
@@ -252,25 +282,34 @@ public final class TfLDataService {
         completion: @escaping (Result<[TfLArrivalPrediction], Error>) -> Void
     ) {
         let urlStr = "https://api.tfl.gov.uk/Line/\(lineId)/Arrivals/\(stationNaptanId)?app_key=\(APIKeys.tflAppKey)"
+        print("[TfLDataService] Fetching arrivals for line \(lineId) at station \(stationNaptanId)")
         guard let url = URL(string: urlStr) else {
+            print("[TfLDataService] Failed to create URL for arrivals fetch")
             completion(.failure(NSError(domain: "TfLDataService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
         }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
             guard let self = self else { return }
             if let error = error {
+                print("[TfLDataService] Error fetching arrivals: \(error)")
                 completion(.failure(error)); return
             }
+            if let httpResponse = response as? HTTPURLResponse {
+                print("[TfLDataService] Arrivals fetch response status: \(httpResponse.statusCode)")
+            }
             guard let data = data else {
+                print("[TfLDataService] No data received from arrivals API")
                 completion(.failure(NSError(domain: "TfLDataService", code: 2, userInfo: [NSLocalizedDescriptionKey: "No data from API"])))
                 return
             }
             do {
                 let arrivalsJSON = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
                 guard let arrivalsArray = arrivalsJSON else {
+                    print("[TfLDataService] Failed to parse arrivals JSON array")
                     completion(.failure(NSError(domain: "TfLDataService", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to parse JSON array"])))
                     return
                 }
+                print("[TfLDataService] Received \(arrivalsArray.count) arrival predictions")
                 var predictions: [TfLArrivalPrediction] = []
                 for dict in arrivalsArray {
                     guard let expectedArrivalStr = dict["expectedArrival"] as? String else { continue }
@@ -288,8 +327,10 @@ public final class TfLDataService {
                     )
                     predictions.append(prediction)
                 }
+                print("[TfLDataService] Successfully parsed \(predictions.count) arrival predictions")
                 completion(.success(predictions))
             } catch {
+                print("[TfLDataService] Error parsing arrivals data: \(error)")
                 completion(.failure(error))
             }
         }.resume()
