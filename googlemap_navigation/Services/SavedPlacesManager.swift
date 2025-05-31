@@ -50,7 +50,6 @@ class SavedPlacesManager {
         return uid
     }
 
-    // Add method to clear cached data
     func clearCachedData() {
         print("🧹 Clearing cached places data")
         cachedPlaces = []
@@ -66,7 +65,7 @@ class SavedPlacesManager {
         return collectionRef
     }
 
-    /// 从 Firestore 加载常用地点列表
+    // load places from firebase
     func loadPlaces(completion: @escaping (Result<[SavedPlace], Error>) -> Void) {
         // If we have cached places and a valid user ID, return them immediately
         if !cachedPlaces.isEmpty, currentUserID != nil {
@@ -137,7 +136,6 @@ class SavedPlacesManager {
         }
     }
 
-    /// 添加或更新一个常用地点到 Firestore
     func addOrUpdatePlace(_ place: SavedPlace, completion: @escaping (Error?) -> Void) {
         guard let collectionRef = frequentPlacesCollectionRef() else {
             let error = NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated or available."])
@@ -172,7 +170,6 @@ class SavedPlacesManager {
         }
     }
 
-    /// 从 Firestore 删除一个自定义的常用地点
     func removePlace(withId id: UUID, isSystemDefault: Bool, defaultName: String, completion: @escaping (Error?) -> Void) {
         guard let collectionRef = frequentPlacesCollectionRef() else {
             let error = NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated or available."])

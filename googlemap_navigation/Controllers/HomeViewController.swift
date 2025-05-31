@@ -6,8 +6,6 @@ import FirebaseFirestore
 import FirebaseAuth
 
 
-
-
 class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate {
 
     // MARK: - Properties
@@ -76,6 +74,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         case setHome = 100          // When tapping "Tap to set Home" card
         case setWork = 101          // When tapping "Tap to set Work" card
         case addFrequent = 102      // When tapping the "+" button to add a new custom frequent place
+        case editFrequent = 103     // When editing an existing custom frequent place
     }
 
     // MARK: - Lifecycle
@@ -474,7 +473,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
 
         // Add "Add More" Button
-        addFrequentPlaceButton = UIButton(type: .custom) // Use .custom for better image control
+        addFrequentPlaceButton = UIButton(type: .custom) 
         if #available(iOS 13.0, *) {
             let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium) // Consistent size
             let plusImage = UIImage(systemName: "plus.circle.fill", withConfiguration: config)
@@ -556,11 +555,52 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         // Store name for easier access in tap handler if needed (though ID is primary identifier)
         card.accessibilityLabel = savedPlace.name
         
-        // Add long press for deletion of *custom* places
-        if !savedPlace.isSystemDefault {
-            let longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPressOnFrequentPlace(_:)))
-            card.addGestureRecognizer(longPressGesture)
+        // Add edit button for all places (both system default and custom)
+        let buttonStack = UIStackView()
+        buttonStack.axis = .horizontal
+        buttonStack.spacing = 8
+        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+        
+        let editButton = UIButton(type: .system)
+        if #available(iOS 13.0, *) {
+            let config = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+            let editImage = UIImage(systemName: "pencil.circle.fill", withConfiguration: config)
+            editButton.setImage(editImage, for: .normal)
+        } else {
+            editButton.setTitle("✎", for: .normal)
         }
+        editButton.tintColor = AppColors.accentBlue
+        editButton.accessibilityIdentifier = savedPlace.id.uuidString // Store the place ID in the button's accessibilityIdentifier
+        editButton.addTarget(self, action: #selector(editFrequentPlaceTapped(_:)), for: .touchUpInside)
+        
+        buttonStack.addArrangedSubview(editButton)
+        
+        // Add delete button 
+            let deleteButton = UIButton(type: .system)
+            if #available(iOS 13.0, *) {
+                let config = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+                let deleteImage = UIImage(systemName: "trash.circle.fill", withConfiguration: config)
+                deleteButton.setImage(deleteImage, for: .normal)
+            } else {
+                deleteButton.setTitle("🗑", for: .normal)
+            }
+            deleteButton.tintColor = .systemRed
+            deleteButton.accessibilityIdentifier = savedPlace.id.uuidString // Store the place ID in the button's accessibilityIdentifier
+            deleteButton.addTarget(self, action: #selector(deleteFrequentPlaceTapped(_:)), for: .touchUpInside)
+            buttonStack.addArrangedSubview(deleteButton)
+        
+        
+        card.addSubview(buttonStack)
+        NSLayoutConstraint.activate([
+            buttonStack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+            buttonStack.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            editButton.widthAnchor.constraint(equalToConstant: 24),
+            editButton.heightAnchor.constraint(equalToConstant: 24)
+        ])
+        
+        // Adjust text stack trailing constraint to make room for buttons
+        textStack.trailingAnchor.constraint(equalTo: buttonStack.leadingAnchor, constant: -4).isActive = true
+        
         return card
     }
     
@@ -615,45 +655,55 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         present(autocompleteController, animated: true, completion: nil)
     }
 
-    @objc private func handleLongPressOnFrequentPlace(_ gestureRecognizer: UILongPressGestureRecognizer) {
-        if gestureRecognizer.state == .began {
-            guard let cardView = gestureRecognizer.view,
-                  let placeIDString = cardView.accessibilityIdentifier,
-                  let placeID = UUID(uuidString: placeIDString),
-                  let placeToRemove = frequentPlaces.first(where: { $0.id == placeID }),
-                  !placeToRemove.isSystemDefault else { // Only custom places can be deleted this way
-                print("ℹ️ System default places (Home/Work) cannot be deleted via long press, only reset by tapping.")
-                return
-            }
+    @objc private func editFrequentPlaceTapped(_ sender: UIButton) {
+        guard let placeIDString = sender.accessibilityIdentifier,
+              let placeID = UUID(uuidString: placeIDString),
+              let placeToEdit = frequentPlaces.first(where: { $0.id == placeID }) else {
+            print("🛑 Could not identify place to edit")
+            return
+        }
+        
+        currentlyEditingFrequentPlace = placeToEdit
+        let autocompleteController = GMSAutocompleteViewController()
+        autocompleteController.delegate = self
+        autocompleteController.view.tag = GMSAutocompleteTag.editFrequent.rawValue
+        
+        let filter = GMSAutocompleteFilter()
+        filter.countries = ["GB"]
+        autocompleteController.autocompleteFilter = filter
+        present(autocompleteController, animated: true)
+    }
 
-            let alert = UIAlertController(title: "Delete \"\(placeToRemove.name)\"",
-                                          message: "Are you sure you want to delete this frequent place?",
-                                          preferredStyle: .actionSheet)
-            alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { [weak self] _ in
-                SavedPlacesManager.shared.removePlace(withId: placeID,
-                                                      isSystemDefault: placeToRemove.isSystemDefault, // Will be false
-                                                      defaultName: placeToRemove.name) { error in
-                    DispatchQueue.main.async {
-                        if let error = error {
-                            print("🛑 Error deleting frequent place: \(error.localizedDescription)")
-                            self?.showErrorAlert(message: "Could not delete \(placeToRemove.name). Please try again.")
-                        } else {
-                            print("✅ Frequent place '\(placeToRemove.name)' deleted.")
-                            self?.refreshFrequentPlacesUI()
-                        }
+    @objc private func deleteFrequentPlaceTapped(_ sender: UIButton) {
+        guard let placeIDString = sender.accessibilityIdentifier,
+              let placeID = UUID(uuidString: placeIDString),
+              let placeToRemove = frequentPlaces.first(where: { $0.id == placeID }) else {
+            print("🛑 Could not identify place to delete")
+            return
+        }
+        
+        let alert = UIAlertController(title: "Delete \"\(placeToRemove.name)\"",
+                                      message: "Are you sure you want to delete this frequent place?",
+                                      preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { [weak self] _ in
+            SavedPlacesManager.shared.removePlace(withId: placeID,
+                                                  isSystemDefault: placeToRemove.isSystemDefault,
+                                                  defaultName: placeToRemove.name) { error in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        print("🛑 Error deleting frequent place: \(error.localizedDescription)")
+                        self?.showErrorAlert(message: "Could not delete \(placeToRemove.name). Please try again.")
+                    } else {
+                        print("✅ Frequent place '\(placeToRemove.name)' deleted.")
+                        self?.refreshFrequentPlacesUI()
                     }
                 }
-            }))
-            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-            
-            if let popoverController = alert.popoverPresentationController { // For iPad support
-                popoverController.sourceView = cardView
-                popoverController.sourceRect = cardView.bounds
             }
-            present(alert, animated: true)
-        }
+        }))
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        present(alert, animated: true)
     }
-    
+
     // MARK: - Location Manager Delegate & Helpers
     func getGreetingText() -> String {
         let hour = Calendar.current.component(.hour, from: Date())
@@ -1073,18 +1123,13 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
 
     func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) {
-        // Get the tag directly, it's a non-optional Int.
         let tagRawValue = viewController.view.tag
-        
-        // Attempt to initialize the GMSAutocompleteTag enum from the raw integer value.
-        // The GMSAutocompleteTag(rawValue:) initializer is failable and returns an Optional GMSAutocompleteTag?.
         guard let tagValue = GMSAutocompleteTag(rawValue: tagRawValue) else {
-            print("🛑 Unknown autocomplete tag raw value: \(tagRawValue)") // Print the raw value for debugging
+            print("🛑 Unknown autocomplete tag raw value: \(tagRawValue)")
             dismiss(animated: true, completion: nil)
-                    return
-                }
-                
-        // Proceed with the rest of your logic using tagValue
+            return
+        }
+        
         let placeAddress = place.formattedAddress ?? place.name ?? "Selected Location"
         let placeCoordinate = place.coordinate
 
@@ -1098,7 +1143,6 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             case .destinationField:
                 self.destinationTextField.text = placeAddress
             case .setHome:
-                // Logic to find and update or create Home
                 let homeID = self.frequentPlaces.first(where: { $0.name == "Home" && $0.isSystemDefault })?.id ?? UUID()
                 let homePlace = SavedPlace(id: homeID,
                                            name: "Home",
@@ -1107,7 +1151,6 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                                            isSystemDefault: true)
                 self.saveFrequentPlaceAndUpdateUI(homePlace)
             case .setWork:
-                // Logic to find and update or create Work
                 let workID = self.frequentPlaces.first(where: { $0.name == "Work" && $0.isSystemDefault })?.id ?? UUID()
                 let workPlace = SavedPlace(id: workID,
                                            name: "Work",
@@ -1116,7 +1159,18 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                                            isSystemDefault: true)
                 self.saveFrequentPlaceAndUpdateUI(workPlace)
             case .addFrequent:
-                self.promptForFrequentPlaceCustomName(selectedPlace: place) // Pass GMSPlace
+                self.promptForFrequentPlaceCustomName(selectedPlace: place)
+            case .editFrequent:
+                if let placeToEdit = self.currentlyEditingFrequentPlace {
+                    let updatedPlace = SavedPlace(
+                        id: placeToEdit.id,
+                        name: placeToEdit.name,
+                        address: placeAddress,
+                        coordinate: placeCoordinate,
+                        isSystemDefault: placeToEdit.isSystemDefault // Preserve the system default status
+                    )
+                    self.saveFrequentPlaceAndUpdateUI(updatedPlace)
+                }
             }
             self.updateStartTripButtonState()
         }
