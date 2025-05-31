@@ -833,7 +833,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     // MARK: - Attractions Loading & UI (Ensure API_KEY is used from APIKeys.googleMaps)
      private func displayAttractions() {
-        guard self.isUILayoutComplete else { // **** 检查 isUILayoutComplete ****
+        guard self.isUILayoutComplete else { 
              print("⚠️ displayAttractions: UI layout not complete. Aborting.")
                         return
                     }
@@ -1015,24 +1015,33 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     @objc private func attractionCardTapped(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view,
               let coordStr = view.accessibilityValue, // Stored as Lat,Lng string
-              let _ = parseCoord(from: coordStr),
+              let coord = parseCoord(from: coordStr),
               let name = view.accessibilityLabel else { return }
 
-        destinationTextField.text = name // Or a more detailed address if available
-        updateStartTripButtonState()
+        // Use the coordinates directly instead of trying to geocode the name
+        let routePreviewVC = RoutePreviewViewController()
         
-        // Optionally, directly initiate route preview if desired
-        // if let start = currentLocation {
-        //    pushRoute(start: start, end: endCoord, startLabel: "Current Location", destLabel: name)
-        // } else if let startText = startTextField.text, !startText.isEmpty, startText.lowercased() != "current location" {
-        //    geocodeAddress(startText) { [weak self] sCoord in
-        //        if let sc = sCoord {
-        //            self?.pushRoute(start: sc, end: endCoord, startLabel: startText, destLabel: name)
-        //        }
-        //    }
-        // } else {
-        //    showErrorAlert(message: "Please set a starting point or enable location services.")
-        // }
+        if let startAddr = startTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !startAddr.isEmpty,
+           startAddr.lowercased() != "current location" {
+            // If we have a specific start address, geocode it
+            geocodeAddress(startAddr) { [weak self] startCoord in
+                guard let self = self, let sc = startCoord else {
+                    self?.showErrorAlert(message: "Could not find starting address: \"\(startAddr)\". Please try again or use current location.")
+                    return
+                }
+                self.navigateToPreview(vc: routePreviewVC, start: sc, end: coord, startLabel: startAddr, destLabel: name)
+            }
+        } else if let current = currentLocation {
+            // Use current location as start
+            navigateToPreview(vc: routePreviewVC, start: current, end: coord, startLabel: "Current Location", destLabel: name)
+        } else {
+            showErrorAlert(message: "Current location is not available. Please ensure location services are enabled or enter a starting address.")
+        }
+        
+        // Update the destination text field for visual feedback
+        destinationTextField.text = name
+        updateStartTripButtonState()
     }
     
     private func parseCoord(from string: String) -> CLLocationCoordinate2D? {
