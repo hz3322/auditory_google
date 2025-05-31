@@ -159,9 +159,10 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                 case .failure(let error):
                     print("Error loading frequent places: \(error.localizedDescription)")
                     if self.frequentPlaces.isEmpty {
+                        // Initialize with empty Home and Work placeholders
                         self.frequentPlaces = [
-                            SavedPlace(placeholderName: "Home", isSystemDefault: true),
-                            SavedPlace(placeholderName: "Work", isSystemDefault: true)
+                            SavedPlace(name: "Home", address: "Tap to set", coordinate: CLLocationCoordinate2D()),
+                            SavedPlace(name: "Work", address: "Tap to set", coordinate: CLLocationCoordinate2D())
                         ]
                     }
                 }
@@ -515,7 +516,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         nameLabel.lineBreakMode = .byTruncatingTail
         
         let addressLabel = UILabel()
-        if savedPlace.isSystemDefault && savedPlace.address.starts(with: "Tap to set") {
+        if savedPlace.address.starts(with: "Tap to set") {
             addressLabel.text = "Tap to set"
             addressLabel.textColor = AppColors.accentBlue // Highlight tappable placeholders
             addressLabel.font = UIFont.systemFont(ofSize: 11, weight: .regular)
@@ -555,12 +556,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         // Store name for easier access in tap handler if needed (though ID is primary identifier)
         card.accessibilityLabel = savedPlace.name
         
-        // Add edit button for all places (both system default and custom)
-        let buttonStack = UIStackView()
-        buttonStack.axis = .horizontal
-        buttonStack.spacing = 8
-        buttonStack.translatesAutoresizingMaskIntoConstraints = false
-        
+        // Add edit button
         let editButton = UIButton(type: .system)
         if #available(iOS 13.0, *) {
             let config = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
@@ -570,43 +566,32 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             editButton.setTitle("✎", for: .normal)
         }
         editButton.tintColor = AppColors.accentBlue
-        editButton.accessibilityIdentifier = savedPlace.id.uuidString // Store the place ID in the button's accessibilityIdentifier
+        editButton.accessibilityIdentifier = savedPlace.id.uuidString
         editButton.addTarget(self, action: #selector(editFrequentPlaceTapped(_:)), for: .touchUpInside)
+        editButton.translatesAutoresizingMaskIntoConstraints = false
         
-        buttonStack.addArrangedSubview(editButton)
-        
-        // Add delete button 
-            let deleteButton = UIButton(type: .system)
-            if #available(iOS 13.0, *) {
-                let config = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-                let deleteImage = UIImage(systemName: "trash.circle.fill", withConfiguration: config)
-                deleteButton.setImage(deleteImage, for: .normal)
-            } else {
-                deleteButton.setTitle("🗑", for: .normal)
-            }
-            deleteButton.tintColor = .systemRed
-            deleteButton.accessibilityIdentifier = savedPlace.id.uuidString // Store the place ID in the button's accessibilityIdentifier
-            deleteButton.addTarget(self, action: #selector(deleteFrequentPlaceTapped(_:)), for: .touchUpInside)
-            buttonStack.addArrangedSubview(deleteButton)
-        
-        
-        card.addSubview(buttonStack)
+        card.addSubview(editButton)
         NSLayoutConstraint.activate([
-            buttonStack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
-            buttonStack.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            editButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+            editButton.centerYAnchor.constraint(equalTo: card.centerYAnchor),
             editButton.widthAnchor.constraint(equalToConstant: 24),
             editButton.heightAnchor.constraint(equalToConstant: 24)
         ])
         
-        // Adjust text stack trailing constraint to make room for buttons
-        textStack.trailingAnchor.constraint(equalTo: buttonStack.leadingAnchor, constant: -4).isActive = true
+        // Adjust text stack trailing constraint to make room for edit button
+        textStack.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -4).isActive = true
+        
+        // Add swipe gesture for deletion
+        let swipeGesture = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeGesture(_:)))
+        swipeGesture.direction = .left
+        card.addGestureRecognizer(swipeGesture)
         
         return card
     }
     
     @objc private func frequentPlaceCardTapped(_ sender: UITapGestureRecognizer) {
         guard let cardView = sender.view,
-              let placeIDString = cardView.accessibilityIdentifier, // This is the UUID string
+              let placeIDString = cardView.accessibilityIdentifier,
               let placeID = UUID(uuidString: placeIDString),
               let tappedPlace = frequentPlaces.first(where: { $0.id == placeID }) else {
             print("🛑 Could not identify frequent place from tap via ID.")
@@ -622,21 +607,21 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     // Helper function to handle the tap logic
     private func handleFrequentPlaceTap(_ tappedPlace: SavedPlace) {
-        // Check if it's a placeholder by its specific address string and system default flag
-        if tappedPlace.isSystemDefault && tappedPlace.address.starts(with: "Tap to set") {
+        // Check if it's a placeholder by its specific address string
+        if tappedPlace.address.starts(with: "Tap to set") {
             self.currentlySettingPlaceName = tappedPlace.name // Store "Home" or "Work"
             
-        let autocompleteController = GMSAutocompleteViewController()
-        autocompleteController.delegate = self
+            let autocompleteController = GMSAutocompleteViewController()
+            autocompleteController.delegate = self
             // Use specific tags for setting Home/Work based on the name of the placeholder
             autocompleteController.view.tag = (tappedPlace.name == "Home") ? GMSAutocompleteTag.setHome.rawValue : GMSAutocompleteTag.setWork.rawValue
-        
-        let filter = GMSAutocompleteFilter()
-        filter.countries = ["GB"]
-        autocompleteController.autocompleteFilter = filter
+            
+            let filter = GMSAutocompleteFilter()
+            filter.countries = ["GB"]
+            autocompleteController.autocompleteFilter = filter
             present(autocompleteController, animated: true, completion: nil)
-        } else if !(tappedPlace.isSystemDefault && tappedPlace.address.starts(with: "Tap to set")) {
-            // A configured place (either a set Home/Work or a custom place) was tapped
+        } else {
+            // A configured place was tapped
             destinationTextField.text = tappedPlace.address // Use the stored address
             print("ℹ️ Frequent place '\(tappedPlace.name)' selected. Address: \(tappedPlace.address)")
             updateStartTripButtonState()
@@ -674,34 +659,75 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         present(autocompleteController, animated: true)
     }
 
-    @objc private func deleteFrequentPlaceTapped(_ sender: UIButton) {
-        guard let placeIDString = sender.accessibilityIdentifier,
+    @objc private func handleSwipeGesture(_ gesture: UISwipeGestureRecognizer) {
+        guard let cardView = gesture.view,
+              let placeIDString = cardView.accessibilityIdentifier,
               let placeID = UUID(uuidString: placeIDString),
               let placeToRemove = frequentPlaces.first(where: { $0.id == placeID }) else {
-            print("🛑 Could not identify place to delete")
             return
         }
         
-        let alert = UIAlertController(title: "Delete \"\(placeToRemove.name)\"",
-                                      message: "Are you sure you want to delete this frequent place?",
-                                      preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { [weak self] _ in
-            SavedPlacesManager.shared.removePlace(withId: placeID,
-                                                  isSystemDefault: placeToRemove.isSystemDefault,
-                                                  defaultName: placeToRemove.name) { error in
-                DispatchQueue.main.async {
-                    if let error = error {
-                        print("🛑 Error deleting frequent place: \(error.localizedDescription)")
-                        self?.showErrorAlert(message: "Could not delete \(placeToRemove.name). Please try again.")
-                    } else {
-                        print("✅ Frequent place '\(placeToRemove.name)' deleted.")
-                        self?.refreshFrequentPlacesUI()
+        // Create a delete action view
+        let deleteActionView = UIView()
+        deleteActionView.backgroundColor = .systemRed
+        deleteActionView.translatesAutoresizingMaskIntoConstraints = false
+        
+        let deleteLabel = UILabel()
+        deleteLabel.text = "Delete"
+        deleteLabel.textColor = .white
+        deleteLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        deleteLabel.translatesAutoresizingMaskIntoConstraints = false
+        
+        deleteActionView.addSubview(deleteLabel)
+        NSLayoutConstraint.activate([
+            deleteLabel.centerXAnchor.constraint(equalTo: deleteActionView.centerXAnchor),
+            deleteLabel.centerYAnchor.constraint(equalTo: deleteActionView.centerYAnchor)
+        ])
+        
+        // Add delete action view to the card
+        cardView.addSubview(deleteActionView)
+        NSLayoutConstraint.activate([
+            deleteActionView.topAnchor.constraint(equalTo: cardView.topAnchor),
+            deleteActionView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
+            deleteActionView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+            deleteActionView.widthAnchor.constraint(equalToConstant: 80)
+        ])
+        
+        // Animate the swipe
+        UIView.animate(withDuration: 0.3, animations: {
+            cardView.transform = CGAffineTransform(translationX: -80, y: 0)
+        }) { _ in
+            // Show confirmation alert
+            let alert = UIAlertController(title: "Delete \"\(placeToRemove.name)\"",
+                                        message: "Are you sure you want to delete this frequent place?",
+                                        preferredStyle: .actionSheet)
+            
+            alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
+                SavedPlacesManager.shared.removePlace(withId: placeID,
+                                                    defaultName: placeToRemove.name) { error in
+                    DispatchQueue.main.async {
+                        if let error = error {
+                            print("🛑 Error deleting frequent place: \(error.localizedDescription)")
+                            self?.showErrorAlert(message: "Could not delete \(placeToRemove.name). Please try again.")
+                        } else {
+                            print("✅ Frequent place '\(placeToRemove.name)' deleted.")
+                            self?.refreshFrequentPlacesUI()
+                        }
                     }
                 }
-            }
-        }))
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        present(alert, animated: true)
+            })
+            
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
+                // Animate back to original position
+                UIView.animate(withDuration: 0.3) {
+                    cardView.transform = .identity
+                } completion: { _ in
+                    deleteActionView.removeFromSuperview()
+                }
+            })
+            
+            self.present(alert, animated: true)
+        }
     }
 
     // MARK: - Location Manager Delegate & Helpers
@@ -1143,20 +1169,18 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             case .destinationField:
                 self.destinationTextField.text = placeAddress
             case .setHome:
-                let homeID = self.frequentPlaces.first(where: { $0.name == "Home" && $0.isSystemDefault })?.id ?? UUID()
+                let homeID = self.frequentPlaces.first(where: { $0.name == "Home" })?.id ?? UUID()
                 let homePlace = SavedPlace(id: homeID,
                                            name: "Home",
                                            address: placeAddress,
-                                           coordinate: placeCoordinate,
-                                           isSystemDefault: true)
+                                           coordinate: placeCoordinate)
                 self.saveFrequentPlaceAndUpdateUI(homePlace)
             case .setWork:
-                let workID = self.frequentPlaces.first(where: { $0.name == "Work" && $0.isSystemDefault })?.id ?? UUID()
+                let workID = self.frequentPlaces.first(where: { $0.name == "Work" })?.id ?? UUID()
                 let workPlace = SavedPlace(id: workID,
                                            name: "Work",
                                            address: placeAddress,
-                                           coordinate: placeCoordinate,
-                                           isSystemDefault: true)
+                                           coordinate: placeCoordinate)
                 self.saveFrequentPlaceAndUpdateUI(workPlace)
             case .addFrequent:
                 self.promptForFrequentPlaceCustomName(selectedPlace: place)
@@ -1166,8 +1190,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                         id: placeToEdit.id,
                         name: placeToEdit.name,
                         address: placeAddress,
-                        coordinate: placeCoordinate,
-                        isSystemDefault: placeToEdit.isSystemDefault // Preserve the system default status
+                        coordinate: placeCoordinate
                     )
                     self.saveFrequentPlaceAndUpdateUI(updatedPlace)
                 }
@@ -1216,15 +1239,14 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             }
             
             // Check for duplicate names among *custom* frequent places
-            if self.frequentPlaces.contains(where: { !$0.isSystemDefault && $0.name.lowercased() == customName.lowercased() }) {
+            if self.frequentPlaces.contains(where: { $0.name.lowercased() == customName.lowercased() }) {
                 self.showErrorAlert(title: "Name Exists", message: "A frequent place with this name already exists. Please choose a different name.")
                 return
             }
 
             let newFrequentPlace = SavedPlace(name: customName,
                                               address: selectedPlace.formattedAddress ?? selectedPlace.name ?? "Unknown Address",
-                                              coordinate: selectedPlace.coordinate,
-                                              isSystemDefault: false) // Custom places are not system defaults
+                                              coordinate: selectedPlace.coordinate) // Custom places are not system defaults
             self.saveFrequentPlaceAndUpdateUI(newFrequentPlace)
         }
         

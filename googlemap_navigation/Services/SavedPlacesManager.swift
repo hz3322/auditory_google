@@ -1,207 +1,137 @@
 import Foundation
-import CoreLocation
 import FirebaseFirestore
 import FirebaseAuth
+import CoreLocation
 
-struct SavedPlace: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var name: String       // "Home", "Work", "Gym", etc.
-    var address: String    // Formatted address string
-    var latitude: Double
-    var longitude: Double
-    var isSystemDefault: Bool = false
-
+struct SavedPlace: Codable {
+    let id: UUID
+    let name: String
+    let address: String
+    let latitude: Double
+    let longitude: Double
+    
     var coordinate: CLLocationCoordinate2D {
         return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
-
-    // Initializer for creating new places
-    init(id: UUID = UUID(), name: String, address: String, coordinate: CLLocationCoordinate2D, isSystemDefault: Bool = false) {
+    
+    init(id: UUID = UUID(), name: String, address: String, coordinate: CLLocationCoordinate2D) {
         self.id = id
         self.name = name
         self.address = address
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
-        self.isSystemDefault = isSystemDefault
-    }
-
-    // Placeholder initializer (e.g., for "Set Home Address")
-    init(placeholderName: String, isSystemDefault: Bool = true) {
-        self.id = UUID()
-        self.name = placeholderName
-        self.address = "Tap to set \(placeholderName)"
-        self.latitude = 0 // Invalid coordinates, clearly a placeholder
-        self.longitude = 0
-        self.isSystemDefault = isSystemDefault
     }
 }
-
 
 class SavedPlacesManager {
     static let shared = SavedPlacesManager()
     private let db = Firestore.firestore()
+    private var cachedPlaces: [SavedPlace]?
     
-    // Add a property to store cached places
-    private var cachedPlaces: [SavedPlace] = []
-
-    private var currentUserID: String? {
-        let uid = Auth.auth().currentUser?.uid
-        print("ℹ️ Current user ID: \(uid ?? "nil")")
-        return uid
-    }
-
-    func clearCachedData() {
-        print("🧹 Clearing cached places data")
-        cachedPlaces = []
-    }
-
-    private func frequentPlacesCollectionRef() -> CollectionReference? {
-        guard let userID = currentUserID else {
-            print("🛑 Error: User ID not available. Cannot access frequent places in Firestore.")
-            return nil
-        }
-        let collectionRef = db.collection("users").document(userID).collection("frequent_places")
-        print("ℹ️ Accessing Firestore collection: users/\(userID)/frequent_places")
-        return collectionRef
-    }
-
-    // load places from firebase
+    private init() {}
+    
     func loadPlaces(completion: @escaping (Result<[SavedPlace], Error>) -> Void) {
-        // If we have cached places and a valid user ID, return them immediately
-        if !cachedPlaces.isEmpty, currentUserID != nil {
-            print("📦 Returning \(cachedPlaces.count) cached places")
-            completion(.success(cachedPlaces))
+        // Return cached places if available
+        if let cached = cachedPlaces {
+            completion(.success(cached))
             return
         }
-
-        guard let collectionRef = frequentPlacesCollectionRef() else {
-            print("ℹ️ No current user ID, returning default placeholders for Home/Work.")
-            let defaultPlaceholders = [
-                SavedPlace(placeholderName: "Home", isSystemDefault: true),
-                SavedPlace(placeholderName: "Work", isSystemDefault: true)
-            ]
-            cachedPlaces = defaultPlaceholders
-            completion(.success(defaultPlaceholders))
+        
+        guard let userId = Auth.auth().currentUser?.uid else {
+            completion(.failure(NSError(domain: "SavedPlacesManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not logged in"])))
             return
         }
-
-        print("📥 Loading places from Firestore...")
-        collectionRef.getDocuments { [weak self] (querySnapshot, error) in
-            guard let self = self else { return }
-            
+        
+        db.collection("users").document(userId).collection("frequent_places").getDocuments { [weak self] snapshot, error in
             if let error = error {
-                print("🛑 Error getting documents from Firestore: \(error.localizedDescription)")
                 completion(.failure(error))
                 return
             }
-
-            print("📦 Retrieved \(querySnapshot?.documents.count ?? 0) documents from Firestore")
-            var places = querySnapshot?.documents.compactMap { document -> SavedPlace? in
-                do {
-                    let place = try document.data(as: SavedPlace.self)
-                    print("✅ Successfully decoded place: \(place.name) (ID: \(place.id))")
-                    return place
-                } catch {
-                    print("🛑 Error decoding SavedPlace from document \(document.documentID): \(error.localizedDescription)")
+            
+            guard let documents = snapshot?.documents else {
+                completion(.success([]))
+                return
+            }
+            
+            let places = documents.compactMap { document -> SavedPlace? in
+                guard let name = document.data()["name"] as? String,
+                      let address = document.data()["address"] as? String,
+                      let latitude = document.data()["latitude"] as? Double,
+                      let longitude = document.data()["longitude"] as? Double else {
                     return nil
                 }
-            } ?? []
-
-            var foundHome = false
-            var foundWork = false
-
-            for place in places {
-                if place.name == "Home" && place.isSystemDefault { foundHome = true }
-                if place.name == "Work" && place.isSystemDefault { foundWork = true }
+                
+                return SavedPlace(id: UUID(uuidString: document.documentID) ?? UUID(),
+                                name: name,
+                                address: address,
+                                coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude))
             }
-
-            if !foundHome {
-                print("ℹ️ Adding Home placeholder")
-                let homePlaceholder = SavedPlace(placeholderName: "Home", isSystemDefault: true)
-                places.insert(homePlaceholder, at: 0)
-            }
-            if !foundWork {
-                print("ℹ️ Adding Work placeholder")
-                let workPlaceholder = SavedPlace(placeholderName: "Work", isSystemDefault: true)
-                let homeIndex = places.firstIndex(where: { $0.name == "Home" && $0.isSystemDefault })
-                let insertAtIndex = homeIndex != nil ? homeIndex! + 1 : (places.isEmpty ? 0 : min(1, places.count))
-                places.insert(workPlaceholder, at: insertAtIndex)
-            }
-
-            // Cache the places
-            self.cachedPlaces = places
             
-            print("✅ Loaded \(places.count) places total")
+            self?.cachedPlaces = places
             completion(.success(places))
         }
     }
-
+    
     func addOrUpdatePlace(_ place: SavedPlace, completion: @escaping (Error?) -> Void) {
-        guard let collectionRef = frequentPlacesCollectionRef() else {
-            let error = NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated or available."])
-            print("🛑 \(error.localizedDescription)")
-            completion(error)
+        guard let userId = Auth.auth().currentUser?.uid else {
+            completion(NSError(domain: "SavedPlacesManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not logged in"]))
             return
         }
         
-        let documentRef = collectionRef.document(place.id.uuidString)
-        print("📝 Saving place '\(place.name)' (ID: \(place.id)) to Firestore...")
+        let data: [String: Any] = [
+            "name": place.name,
+            "address": place.address,
+            "latitude": place.latitude,
+            "longitude": place.longitude
+        ]
         
-        do {
-            try documentRef.setData(from: place, merge: true) { [weak self] error in
-                guard let self = self else { return }
-                
+        db.collection("users").document(userId).collection("frequent_places")
+            .document(place.id.uuidString)
+            .setData(data) { [weak self] error in
                 if let error = error {
-                    print("🛑 Error writing document \(place.id.uuidString) (\(place.name)) to Firestore: \(error.localizedDescription)")
-                } else {
-                    print("✅ Document \(place.id.uuidString) (\(place.name)) successfully written/updated in Firestore!")
-                    // Update cached places
-                    if let index = self.cachedPlaces.firstIndex(where: { $0.id == place.id }) {
-                        self.cachedPlaces[index] = place
+                    completion(error)
+                    return
+                }
+                
+                // Update cache
+                if var cached = self?.cachedPlaces {
+                    if let index = cached.firstIndex(where: { $0.id == place.id }) {
+                        cached[index] = place
                     } else {
-                        self.cachedPlaces.append(place)
+                        cached.append(place)
                     }
+                    self?.cachedPlaces = cached
                 }
-                completion(error)
+                
+                completion(nil)
             }
-        } catch {
-            print("🛑 Error encoding SavedPlace '\(place.name)' for Firestore: \(error.localizedDescription)")
-            completion(error)
-        }
     }
-
-    func removePlace(withId id: UUID, isSystemDefault: Bool, defaultName: String, completion: @escaping (Error?) -> Void) {
-        guard let collectionRef = frequentPlacesCollectionRef() else {
-            let error = NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated or available."])
-            print("🛑 \(error.localizedDescription)")
-            completion(error)
+    
+    func removePlace(withId id: UUID, defaultName: String, completion: @escaping (Error?) -> Void) {
+        guard let userId = Auth.auth().currentUser?.uid else {
+            completion(NSError(domain: "SavedPlacesManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not logged in"]))
             return
         }
-
-        let documentRef = collectionRef.document(id.uuidString)
-        print("🗑️ Removing place with ID: \(id) from Firestore...")
-
-        if isSystemDefault {
-            print("ℹ️ Resetting system default place '\(defaultName)' to placeholder state")
-            let placeholder = SavedPlace(id: id,
-                                         name: defaultName,
-                                         address: "Tap to set \(defaultName)",
-                                         coordinate: CLLocationCoordinate2D(latitude: 0, longitude: 0),
-                                         isSystemDefault: true)
-            addOrUpdatePlace(placeholder, completion: completion)
-        } else {
-            documentRef.delete { [weak self] error in
-                guard let self = self else { return }
-                
+        
+        db.collection("users").document(userId).collection("frequent_places")
+            .document(id.uuidString)
+            .delete { [weak self] error in
                 if let error = error {
-                    print("🛑 Error removing document \(id.uuidString) from Firestore: \(error.localizedDescription)")
-                } else {
-                    print("✅ Document \(id.uuidString) successfully removed from Firestore!")
-                    // Remove from cached places
-                    self.cachedPlaces.removeAll { $0.id == id }
+                    completion(error)
+                    return
                 }
-                completion(error)
+                
+                // Update cache
+                if var cached = self?.cachedPlaces {
+                    cached.removeAll { $0.id == id }
+                    self?.cachedPlaces = cached
+                }
+                
+                completion(nil)
             }
-        }
+    }
+    
+    func clearCachedData() {
+        cachedPlaces = nil
     }
 }
