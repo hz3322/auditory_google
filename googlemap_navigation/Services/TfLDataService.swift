@@ -31,7 +31,6 @@ public final class TfLDataService {
     }
     
     // MARK: - Properties
-    
     private var stationIdMap: [String: String] = [:] // For fast station name -> naptanId lookup
     
     private let isoFormatter: ISO8601DateFormatter = {
@@ -48,7 +47,7 @@ public final class TfLDataService {
 
     // MARK: - Journey Planner
     
-    /// Fetches the sequence of stop names between two coordinates (tube journey only)
+    // Fetches the sequence of stop names between two coordinates (tube journey only)
     func fetchJourneyPlannerStops(
         fromCoord: CLLocationCoordinate2D,
         toCoord: CLLocationCoordinate2D,
@@ -80,7 +79,7 @@ public final class TfLDataService {
 
     // MARK: - Station Data / Utilities
 
-    /// Loads all tube stations into a dictionary of [Name: StationMeta]
+    // Loads all tube stations into a dictionary of [Name: StationMeta]
     func loadAllTubeStations(completion: @escaping ([String: StationMeta]) -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/Mode/tube"
         guard let url = URL(string: urlStr) else { completion([:]); return }
@@ -105,7 +104,7 @@ public final class TfLDataService {
         }.resume()
     }
     
-    /// Finds the nearest station in the supplied [Name: StationMeta] dictionary
+    // Finds the nearest station in the supplied [Name: StationMeta] dictionary
     func findNearestStation(to location: CLLocation, from stations: [String: StationMeta]) -> String? {
         let closest = stations.min { lhs, rhs in
             let lhsLoc = CLLocation(latitude: lhs.value.coord.latitude, longitude: lhs.value.coord.longitude)
@@ -115,33 +114,6 @@ public final class TfLDataService {
         return closest?.key
     }
     
-    /// Gets naptanId from station name in supplied [Name: StationMeta] dictionary
-    func getStationId(from stationName: String, in stations: [String: StationMeta]) -> String? {
-        return stations[stationName]?.id
-    }
-
-    /// Converts a pretty tube line name to its TfL ID
-    func tflLineId(from lineName: String) -> String? {
-        let mapping: [String: String] = [
-            "Bakerloo": "bakerloo", "Central": "central", "Circle": "circle", "District": "district",
-            "Hammersmith & City": "hammersmith-city", "Jubilee": "jubilee", "Metropolitan": "metropolitan",
-            "Northern": "northern", "Piccadilly": "piccadilly", "Victoria": "victoria", "Waterloo & City": "waterloo-city",
-            "London Overground": "london-overground", "Elizabeth": "elizabeth", "Elizabeth line": "elizabeth",
-            "TfL Rail": "elizabeth", "DLR": "dlr", "Tram": "tram"
-        ]
-        if let id = mapping[lineName] { return id }
-        let lower = lineName.lowercased()
-        return mapping.first { $0.key.lowercased() == lower }?.value
-    }
-    
-    /// Normalizes station names for consistent lookup (removes "Underground Station", trims whitespace, lowercases)
-    func normalizeStationName(_ name: String) -> String {
-        return name
-            .lowercased()
-            .replacingOccurrences(of: " underground station", with: "")
-            .replacingOccurrences(of: " station", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 
     /// Caches all [stationName: naptanId] for lookup (used by resolveStationId)
     func fetchAllTubeStationIds(completion: @escaping () -> Void) {
@@ -253,7 +225,7 @@ public final class TfLDataService {
         }.resume()
     }
 
-    /// Fetches all arrivals at a station, optionally filtering by line IDs.
+    // Fetches all arrivals at a station, optionally filtering by line IDs.
     func fetchAllArrivals(for naptanId: String, relevantLineIds: [String]?, completion: @escaping ([TfLArrivalPrediction]) -> Void) {
         fetchAvailableLines(for: naptanId) { allAvailableLineIdsAtStation in
             let linesToFetch = relevantLineIds ?? allAvailableLineIdsAtStation
@@ -275,7 +247,7 @@ public final class TfLDataService {
         }
     }
 
-    /// Fetches all arrival predictions for a given line and station
+    // Fetches all arrival predictions for a given line and station
     func fetchTrainArrivals(
         lineId: String,
         stationNaptanId: String,
@@ -335,4 +307,35 @@ public final class TfLDataService {
             }
         }.resume()
     }
+    
+    
+    // Utilities function
+    // Gets naptanId from station name in supplied [Name: StationMeta] dictionary
+    func getStationId(from stationName: String, in stations: [String: StationMeta]) -> String? {
+        return stations[stationName]?.id
+    }
+
+    /// Converts a pretty tube line name to its TfL ID
+    func tflLineId(from lineName: String) -> String? {
+        let mapping: [String: String] = [
+            "Bakerloo": "bakerloo", "Central": "central", "Circle": "circle", "District": "district",
+            "Hammersmith & City": "hammersmith-city", "Jubilee": "jubilee", "Metropolitan": "metropolitan",
+            "Northern": "northern", "Piccadilly": "piccadilly", "Victoria": "victoria", "Waterloo & City": "waterloo-city",
+            "London Overground": "london-overground", "Elizabeth": "elizabeth", "Elizabeth line": "elizabeth",
+            "TfL Rail": "elizabeth", "DLR": "dlr", "Tram": "tram"
+        ]
+        if let id = mapping[lineName] { return id }
+        let lower = lineName.lowercased()
+        return mapping.first { $0.key.lowercased() == lower }?.value
+    }
+    
+    /// Normalizes station names for consistent lookup (removes "Underground Station", trims whitespace, lowercases)
+    func normalizeStationName(_ name: String) -> String {
+        return name
+            .lowercased()
+            .replacingOccurrences(of: " underground station", with: "")
+            .replacingOccurrences(of: " station", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
 }

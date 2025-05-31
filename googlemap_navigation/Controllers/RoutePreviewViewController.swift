@@ -188,7 +188,14 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
             self.exitWalkMin = walkToDestinationMin
 
             self.drawPolyline(from: routeSteps)
-            self.addMarkersAndPolylines()
+            self.addMarkers()
+
+            // Debugging: Print transitInfos
+            print("--- Debugging transitInfos ---")
+            for (index, transitInfo) in self.transitInfos.enumerated() {
+                print("Segment \(index): Line: \(transitInfo.lineName ?? "N/A"), From: \(transitInfo.departureStation ?? "N/A"), To: \(transitInfo.arrivalStation ?? "N/A")")
+            }
+            print("----------------------------")
         }
     }
 
@@ -229,11 +236,11 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     private func loadStationCoordinates() {
        TfLDataService.shared.loadAllTubeStations { [weak self] stationsDict in
             self?.stationCoordinates = stationsDict
-            self?.addMarkersAndPolylines()
+            self?.addMarkers()
         }
     }
 
-    private func addMarkersAndPolylines() {
+    private func addMarkers() {
         guard !transitInfos.isEmpty else { return }
 
         for info in transitInfos {
@@ -253,16 +260,6 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
             endMarker.icon = GMSMarker.markerImage(with: .systemRed)
             endMarker.map = mapView
             addFloatingStationLabel(name: endName, coordinate: endMeta.coord)
-
-            // MARK: Polyline between stations
-            let path = GMSMutablePath()
-            path.add(startMeta.coord)
-            path.add(endMeta.coord)
-
-            let polyline = GMSPolyline(path: path)
-            polyline.strokeWidth = 3.5
-            polyline.strokeColor = UIColor(hex: info.lineColorHex ?? "#000000")
-            polyline.map = mapView
         }
 
         // Adjust map camera
