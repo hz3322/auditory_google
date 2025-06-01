@@ -1078,6 +1078,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                     guard let ec = endCoord else {
                         self.showErrorAlert(message: "Could not find destination address: \"\(destinationAddress)\"."); return
                     }
+                    print("[HomeVC] Passing destinationAddress to navigateToPreview: \(destinationAddress)")
                     self.navigateToPreview(vc: routePreviewVC, start: sc, end: ec, startLabel: startAddr, destLabel: destinationAddress)
                 }
             }
@@ -1089,6 +1090,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                 guard let self = self, let ec = endCoord else {
                     self?.showErrorAlert(message: "Could not find destination address: \"\(destinationAddress)\"."); return
                 }
+                print("[HomeVC] Passing destinationAddress to navigateToPreview: \(destinationAddress)")
                 self.navigateToPreview(vc: routePreviewVC, start: current, end: ec, startLabel: "Current Location", destLabel: destinationAddress)
             }
         }

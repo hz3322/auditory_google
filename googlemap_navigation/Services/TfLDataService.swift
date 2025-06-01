@@ -115,7 +115,7 @@ public final class TfLDataService {
     }
     
 
-    /// Caches all [stationName: naptanId] for lookup (used by resolveStationId)
+    // Caches all [stationName: naptanId] for lookup (used by resolveStationId)
     func fetchAllTubeStationIds(completion: @escaping () -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/Mode/tube"
         guard let url = URL(string: urlStr) else { completion(); return }
@@ -145,7 +145,7 @@ public final class TfLDataService {
         }.resume()
     }
     
-    /// Resolves any (possibly fuzzy) station name to a naptanId, first checking local cache, then using API if needed.
+    // Resolves any (possibly fuzzy) station name to a naptanId, first checking local cache, then using API if needed.
     func resolveStationId(for stationName: String, completion: @escaping (String?) -> Void) {
         let cleanedName = normalizeStationName(stationName)
         print("[TfLDataService] Resolving station ID for: \(stationName) (cleaned: \(cleanedName))")
@@ -192,7 +192,7 @@ public final class TfLDataService {
 
     // MARK: - Arrival Data
 
-    /// Fetches available line IDs for a station by naptanId
+    // Fetches available line IDs for a station by naptanId
     func fetchAvailableLines(for naptanId: String, completion: @escaping ([String]) -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/\(naptanId)"
         print("[TfLDataService] Fetching available lines for station: \(naptanId)")
@@ -217,7 +217,7 @@ public final class TfLDataService {
                         result.append(id)
                     }
                 }
-                print("[TfLDataService] Found \(result.count) available lines: \(result)")
+                print("[TfLDataService] Found \(result.count) available lines: \(result) at this station")
             } else {
                 print("[TfLDataService] Failed to parse available lines response")
             }
@@ -229,10 +229,11 @@ public final class TfLDataService {
     func fetchAllArrivals(for naptanId: String, relevantLineIds: [String]?, completion: @escaping ([TfLArrivalPrediction]) -> Void) {
         fetchAvailableLines(for: naptanId) { allAvailableLineIdsAtStation in
             let linesToFetch = relevantLineIds ?? allAvailableLineIdsAtStation
-            let finalLineIds = relevantLineIds != nil ? allAvailableLineIdsAtStation.filter { linesToFetch.contains($0) } : linesToFetch
+//            let finalLineIds = relevantLineIds != nil ? allAvailableLineIdsAtStation.filter { linesToFetch.contains($0) } : linesToFetch
+//            print("-------------- LOOK HERE -----------Fetch ALl arrivals and the final line ids are : \(finalLineIds)")
             let group = DispatchGroup()
             var allArrivals: [TfLArrivalPrediction] = []
-            for lineId in finalLineIds {
+            for lineId in linesToFetch {
                 group.enter()
                 TfLDataService.shared.fetchTrainArrivals(lineId: lineId, stationNaptanId: naptanId) { result in
                     if case .success(let arrivals) = result {
@@ -242,7 +243,7 @@ public final class TfLDataService {
                 }
             }
             group.notify(queue: .main) {
-                completion(allArrivals)
+              completion(allArrivals)
             }
         }
     }
@@ -336,6 +337,40 @@ public final class TfLDataService {
             .replacingOccurrences(of: " underground station", with: "")
             .replacingOccurrences(of: " station", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func fetchArrivals(forStationId stationId: String, lineId: String? = nil) async throws -> [TfLArrivalPrediction] {
+        print("[TfLDataService] Fetching arrivals for station: \(stationId), line: \(lineId ?? "all")")
+        
+        var urlComponents = URLComponents(string: "\(baseURL)/Line/\(lineId ?? "")/Arrivals/\(stationId)")
+        if lineId == nil {
+            urlComponents = URLComponents(string: "\(baseURL)/StopPoint/\(stationId)/Arrivals")
+        }
+        
+        guard let url = urlComponents?.url else {
+            throw TfLError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.addValue(apiKey, forHTTPHeaderField: "app_key")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw TfLError.invalidResponse
+        }
+        
+        print("[TfLDataService] Arrivals fetch response status: \(httpResponse.statusCode)")
+        
+        guard httpResponse.statusCode == 200 else {
+            throw TfLError.serverError(statusCode: httpResponse.statusCode)
+        }
+        
+        let predictions = try JSONDecoder().decode([TfLArrivalPrediction].self, from: data)
+        print("[TfLDataService] Received \(predictions.count) arrival predictions")
+        print("[TfLDataService] Successfully parsed \(predictions.count) arrival predictions")
+        
+        return predictions
     }
 
 }

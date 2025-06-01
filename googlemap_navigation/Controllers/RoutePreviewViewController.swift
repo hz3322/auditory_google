@@ -322,6 +322,13 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
         let coordinatesDict: [String: CLLocationCoordinate2D] = self.stationCoordinates.mapValues { $0.coord }
         summaryVC.stationCoordinates = coordinatesDict
         
+        // Pass the final destination station name
+        summaryVC.finalDestinationStationName = self.destinationLabelName
+        
+        // Pass the entire route's start and destination coordinates
+        summaryVC.routeStartCoordinate = self.startLocation
+        summaryVC.routeDestinationCoordinate = self.destinationLocation
+        
         navigationController?.pushViewController(summaryVC, animated: true)
     }
     

@@ -37,7 +37,7 @@ public struct WalkStep {
     }
 }
 
-public struct TransitInfo {
+public struct TransitInfo: Equatable {
     var lineName: String
     var departureStation: String?
     var arrivalStation: String?
@@ -95,7 +95,8 @@ public struct TransitInfo {
 //        self.stationToPlatformSec = stationToPlatformSec
     }
 }
-    
+
+
     // Represents a step in the navigation sequence (e.g., "Board at Oxford Circus")
     public struct TransitStep {
         let title: String            // For display (e.g., station name)
@@ -112,3 +113,8 @@ public struct TransitInfo {
         }
     }
 
+extension CLLocationCoordinate2D: @retroactive Equatable {
+    public static func == (lhs: CLLocationCoordinate2D, rhs: CLLocationCoordinate2D) -> Bool {
+        lhs.latitude == rhs.latitude && lhs.longitude == rhs.longitude
+    }
+}

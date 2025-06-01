@@ -26,6 +26,12 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     var transitInfos: [TransitInfo] = []
     var routeDepartureTime: String?
     var routeArrivalTime: String?
+    /// The final destination station name for the entire route, passed from the previous screen.
+    var finalDestinationStationName: String? = nil
+    /// The starting coordinate for the entire route, passed from the previous screen.
+    var routeStartCoordinate: CLLocationCoordinate2D? = nil
+    /// The destination coordinate for the entire route, passed from the previous screen.
+    var routeDestinationCoordinate: CLLocationCoordinate2D? = nil
     
     var walkToStationTimeSec: Double = 0
     var stationToPlatformTimeSec: Double = 120
@@ -354,14 +360,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         ])
     }
     
-    func normalizeStationName(_ name: String) -> String {
-        return name
-            .lowercased()
-            .replacingOccurrences(of: " underground station", with: "")
-            .replacingOccurrences(of: " station", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    
     // tracking user's real time progress through their planned journey - init journey progress Service
     private func setupProgressService() {
         guard let firstTransitInfo = transitInfos.first,
@@ -414,6 +412,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             print("[RouteSummaryVC] stationCoordinates not loaded yet. Delaying populateSummary.")
             return
         }
+        
+        // Debugging: Print the final destination name
+        print("[RouteSummaryVC] Final Destination Station Name: \(self.finalDestinationStationName ?? "N/A")")
 
         // Convert walking time from minutes to seconds
         if let walkStartText = walkToStationTime, !walkStartText.isEmpty {
@@ -452,119 +453,14 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             let catchTrainCard = makeCard(customView: catchSectionView, internalPadding: 12)
             viewsToAdd.append(catchTrainCard)
             
-            // Ensure lineName and departureStation are not nil before proceeding
-            guard let departureStationName = transitLegInfo.departureStation else {
-                 let errorLabel = UILabel()
-                 errorLabel.text = "Train line/station info missing."
-                 errorLabel.font = .systemFont(ofSize: 14); errorLabel.textColor = .secondaryLabel
-                 catchSectionView.addArrangedSubview(errorLabel)
-                 // Add an error label or handle the missing info gracefully
-                 continue // Skip this transit leg if info is missing
-             }
-
-            let lineName = transitLegInfo.lineName
-            let timeNeededAtStationToReachPlatformSec: Double = self.stationToPlatformTimeSec
-            
-            // 1. Resolve Station ID
-            TfLDataService.shared.resolveStationId(for: departureStationName) { [weak self, weak catchSectionView, weak catchTrainCard] stationNaptanId in
-                guard let self = self, let naptanId = stationNaptanId, let strongCatchSectionView = catchSectionView else {
-                    DispatchQueue.main.async {
-                        self?.addErrorLabel("Station ID not found for \(departureStationName).", to: catchSectionView)
-                        catchTrainCard?.layoutIfNeeded()
-                    }
-                    return
-                }
-                
-                guard let lineId = TfLDataService.shared.tflLineId(from: lineName) else {
-                    DispatchQueue.main.async {
-                        self.addErrorLabel("Line ID not found for \(lineName).", to: strongCatchSectionView)
-                        catchTrainCard?.layoutIfNeeded()
-                    }
-                    return
-                }
-                
-                // 2. Fetch Arrivals
-                TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: [lineId]) { allArrivals in
-                    DispatchQueue.main.async {
-                        // 1. Clear previous rows (except the title)
-                        strongCatchSectionView.arrangedSubviews
-                            .filter { !($0 is UILabel && ($0 as? UILabel)?.text == catchTitleLabel.text) }
-                            .forEach { $0.removeFromSuperview() }
-
-                        // 2. Handle empty arrivals
-                        if allArrivals.isEmpty {
-                            self.addErrorLabel("No upcoming train data available.", to: strongCatchSectionView)
-                            return
-                        }
-
-                        // 3. Convert to CatchInfo
-                        let now = Date()
-                        var catchInfos: [CatchInfo] = []
-                        for prediction in allArrivals {
-                            let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
-                            let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
-                            let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
-
-                            let catchInfo = CatchInfo(
-                                lineName: prediction.lineName ?? (prediction.lineId ?? ""),
-                                lineColorHex: self.TfLLinesColorMap[prediction.lineId ?? ""] ?? "#007AFF",
-                                fromStation: departureStationName,
-                                toStation: prediction.destinationName ?? "",
-                                stops: [],
-                                expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
-                                expectedArrivalDate: prediction.expectedArrival,
-                                timeToStation: prediction.timeToStation,
-                                timeLeftToCatch: timeLeftToCatch,
-                                catchStatus: status
-                            )
-                            catchInfos.append(catchInfo)
-                        }
-
-                        // 4. Filter and sort: show only catchable trains (by soonest), top 3
-                        let relevantCatchInfos = catchInfos
-                            .filter { $0.catchStatus != .missed }
-                            .sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
-                        var top3 = Array(relevantCatchInfos.prefix(3))
-                        if top3.isEmpty, !catchInfos.isEmpty {
-                            // If all are technically "missed", just show soonest 3
-                            top3 = Array(catchInfos.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }.prefix(3))
-                        }
-
-                        // 5. Update ProgressService's next target (only for the first segment)
-                        if index == 0 {
-                            if let firstTrain = top3.first(where: { $0.catchStatus != .missed }) ?? top3.first {
-                                self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
-                                print("[RouteSummaryVC] Updated nextTrainArrivalDate for tracking: \(self.nextTrainArrivalDate)")
-                                self.setupProgressService()
-                            } else {
-                                print("[RouteSummaryVC] No valid trains to set nextTrainArrivalDate for index 0.")
-                            }
-                        }
-
-                        // 6. Add new animated rows for each train
-                        var animatedRows: [UIView] = []
-                        for singleCatchInfo in top3 {
-                            let row = CatchInfoRowView(info: singleCatchInfo)
-                            row.alpha = 0
-                            strongCatchSectionView.addArrangedSubview(row)
-                            animatedRows.append(row)
-                        }
-
-                        // Animate in
-                        UIView.animate(withDuration: 0.35, delay: 0, options: .curveEaseOut, animations: {
-                            catchTrainCard?.layoutIfNeeded()
-                        })
-                        for (rowIndex, rowView) in animatedRows.enumerated() {
-                            UIView.animate(withDuration: 0.3, delay: 0.1 + Double(rowIndex) * 0.08, options: .curveEaseOut, animations: {
-                                rowView.alpha = 1
-                            })
-                        }
-
-                        // 7. Ensure layout refresh
-                        catchTrainCard?.layoutIfNeeded()
-                    }
-                }
-            }
+            // Call the new helper method to fetch, filter, and display arrivals
+            fetchAndFilterArrivals(
+                for: transitLegInfo,
+                catchSectionView: catchSectionView,
+                catchTrainCard: catchTrainCard,
+                timeNeededAtStationToReachPlatformSec: self.stationToPlatformTimeSec,
+                catchTitleLabel: catchTitleLabel
+            )
             
             // Check for transfer leg and add transfer card if necessary
             if index < transitInfos.count - 1 {
@@ -801,6 +697,197 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         return card
     }
 
+    // MARK: - Data Fetching and Processing
+
+    private func fetchAndFilterArrivals(
+        for transitLegInfo: TransitInfo,
+        catchSectionView: UIStackView,
+        catchTrainCard: UIView,
+        timeNeededAtStationToReachPlatformSec: Double,
+        catchTitleLabel: UILabel
+    ) {
+        guard let departureStationName = transitLegInfo.departureStation else {
+            self.addErrorLabel("Train line/station info missing.", to: catchSectionView)
+            catchTrainCard.layoutIfNeeded()
+            return
+        }
+        
+        let lineName = transitLegInfo.lineName
+        let targetStationName = self.finalDestinationStationName ?? transitLegInfo.arrivalStation ?? ""
+        let departureStationCoord = transitLegInfo.departureCoordinate
+        let arrivalStationCoord = transitLegInfo.arrivalCoordinate
+
+        // 1. Resolve Station ID for the departure station.
+        TfLDataService.shared.resolveStationId(for: departureStationName) { [weak self] stationNaptanId in
+            guard let self = self, let naptanId = stationNaptanId else {
+                DispatchQueue.main.async {
+                    self?.addErrorLabel("Station ID not found for \(departureStationName).", to: catchSectionView)
+                    catchTrainCard.layoutIfNeeded()
+                }
+                return
+            }
+
+            guard let lineId = TfLDataService.shared.tflLineId(from: lineName) else {
+                DispatchQueue.main.async {
+                    self.addErrorLabel("Line ID not found for \(lineName).", to: catchSectionView)
+                    catchTrainCard.layoutIfNeeded()
+                }
+                return
+            }
+            
+            // Use DispatchGroup to wait for both stop sequence and arrivals to fetch
+            let fetchGroup = DispatchGroup()
+            var stopSequence: [String]? = nil
+            var allArrivals: [TfLArrivalPrediction] = []
+            
+            // Fetch journey planner stop list from the *current segment's departure* to the *entire route's destination*.
+            if let depCoord = departureStationCoord, let routeDestCoord = self.routeDestinationCoordinate {
+                print("[RouteSummaryVC] Fetching stop sequence from current segment departure to route destination.")
+                fetchGroup.enter()
+                TfLDataService.shared.fetchJourneyPlannerStops(fromCoord: depCoord, toCoord: routeDestCoord) { sequence in
+                    stopSequence = sequence
+                    print("[RouteSummaryVC] Fetched stop sequence for filtering: \(sequence)")
+                    fetchGroup.leave()
+                }
+            } else {
+                print("[RouteSummaryVC] Skipping fetchJourneyPlannerStops due to missing coordinates.")
+            }
+
+            // Fetch all arrivals for the station
+            fetchGroup.enter()
+            TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: nil) { arrivals in
+                allArrivals = arrivals
+                fetchGroup.leave()
+            }
+            
+            
+            
+            fetchGroup.notify(queue: .main) {
+                catchSectionView.arrangedSubviews
+                    .filter { !($0 is UILabel && ($0 as? UILabel)?.text == catchTitleLabel.text) }
+                    .forEach { $0.removeFromSuperview() }
+
+                guard let stopSequence = stopSequence, !stopSequence.isEmpty else {
+                    self.addErrorLabel("No stop sequence available.", to: catchSectionView)
+                    catchTrainCard.layoutIfNeeded()
+                    return
+                }
+                let stopList = stopSequence.map { self.normalizeStationName($0) }
+                let depNorm = self.normalizeStationName(departureStationName)
+                
+                // 🟢 自动目标站名匹配
+                guard let targetTfLName = self.bestMatchingStationName(in: stopSequence, for: targetStationName) else {
+                    self.addErrorLabel("Target station not found in this route segment.", to: catchSectionView)
+                    catchTrainCard.layoutIfNeeded()
+                    print("ERROR: Cannot match target \(targetStationName) in \(stopSequence)")
+                    return
+                }
+                let targetNorm = self.normalizeStationName(targetTfLName)
+                print("[RouteSummaryVC] Smart matched target station: \(targetTfLName) [norm: \(targetNorm)]")
+                
+                
+                for prediction in allArrivals {
+                    let rawDest = prediction.destinationName ?? "<empty>"
+                    let normDest = self.normalizeStationName(rawDest)
+                    print("[DEBUG] prediction.destinationName: '\(rawDest)' | norm: '\(normDest)'")
+                }
+                print("[DEBUG] stopList: \(stopList)")
+                print("[DEBUG] targetNorm: \(targetNorm)")
+                print("[DEBUG] depNorm: \(depNorm)")
+                
+                // ⭐️ Filter
+                let now = Date()
+                let validArrivals = allArrivals.filter { prediction in
+                    let destNorm = self.normalizeStationName(prediction.destinationName ?? "")
+                    // 1. 到终点直接过
+                    if destNorm == targetNorm { return true }
+                    // 2. 如果终点在stopList且目标之后
+                    if let targetIdx = stopList.firstIndex(of: targetNorm),
+                       let depIdx = stopList.firstIndex(of: depNorm) {
+                        if let destIdx = stopList.firstIndex(of: destNorm) {
+                            return destIdx >= targetIdx && depIdx <= targetIdx
+                        } else {
+                            // 3. 如果终点不在stopList，说明这是更远的终点——默认可以经过目标
+                            return depIdx <= targetIdx
+                        }
+                    }
+                    return false
+                }
+                
+                print("[RouteSummaryVC] Filtered down to \(validArrivals.count) valid arrivals.")
+
+                if validArrivals.isEmpty {
+                    self.addErrorLabel("No upcoming train data available for your destination.", to: catchSectionView)
+                    catchTrainCard.layoutIfNeeded()
+                    return
+                }
+
+                // 生成CatchInfo
+                let catchInfos = validArrivals.map { prediction -> CatchInfo in
+                    let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
+                    let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
+                    let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
+                    return CatchInfo(
+                        lineName: prediction.lineName ?? (prediction.lineId ?? ""),
+                        lineColorHex: self.TfLLinesColorMap[prediction.lineId ?? ""] ?? "#007AFF",
+                        fromStation: departureStationName,
+                        toStation: prediction.destinationName ?? "",
+                        stops: [],
+                        expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
+                        expectedArrivalDate: prediction.expectedArrival,
+                        timeToStation: prediction.timeToStation,
+                        timeLeftToCatch: timeLeftToCatch,
+                        catchStatus: status
+                    )
+                }.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
+
+                // 更新ProgressService
+                if let firstTrain = catchInfos.first(where: { $0.catchStatus != .missed }) ?? catchInfos.first {
+                    self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
+                    self.setupProgressService()
+                } else if transitLegInfo == self.transitInfos.first {
+                    self.addErrorLabel("No catchable trains for the first leg.", to: catchSectionView)
+                }
+
+                // 展示UI
+                let arrivalsToDisplay = Array(catchInfos.prefix(5))
+                for singleCatchInfo in arrivalsToDisplay {
+                    let row = CatchInfoRowView(info: singleCatchInfo)
+                    row.alpha = 0
+                    catchSectionView.addArrangedSubview(row)
+                    UIView.animate(withDuration: 0.35, delay: 0, options: .curveEaseOut, animations: {
+                        row.alpha = 1
+                    })
+                }
+                catchTrainCard.layoutIfNeeded()
+            }
+        }
+    }
+
+    // MARK: - 辅助方法，智能目标站匹配（贴在你的VC里就行）
+    private func bestMatchingStationName(in stopList: [String], for rawTargetName: String) -> String? {
+        let normTarget = normalizeStationName(rawTargetName)
+        // 完全相等
+        if let exact = stopList.first(where: { normalizeStationName($0) == normTarget }) {
+            return exact
+        }
+        // 部分包含
+        if let partial = stopList.first(where: { normalizeStationName($0).contains(normTarget) || normTarget.contains(normalizeStationName($0)) }) {
+            return partial
+        }
+        // fallback（可以扩展Levenshtein距离），现在用前两种已经cover几乎所有真实case
+        return nil
+    }
+
+    // 你的normalizeStationName方法
+    private func normalizeStationName(_ name: String) -> String {
+        return name
+            .lowercased()
+            .replacingOccurrences(of: " underground station", with: "")
+            .replacingOccurrences(of: " station", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
     // MARK: - Location Manager Delegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard locations.last != nil else { return }

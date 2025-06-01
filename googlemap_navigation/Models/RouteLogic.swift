@@ -2,11 +2,17 @@ import Foundation
 import CoreLocation
 import GoogleMaps
 
+/// Handles the core route fetching and processing logic.
+/// Acts as a singleton for easy access throughout the app.
 public final class RouteLogic {
     static let shared = RouteLogic()
     private init() {}
     
+    // MARK: - Properties
+    
+    /// Dictionary to store station coordinates by name.
     var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
+    /// Dictionary to store station metadata by name.
     var stationsDict: [String: StationMeta] = [:]
     
     // MARK: - Route Fetching
@@ -40,8 +46,11 @@ public final class RouteLogic {
                     let (_, transitMin, walkSteps, segments) = self.calculateRouteTimes(from: steps)
                     let transitSteps = steps.filter { $0["travel_mode"] as? String == "TRANSIT" }
                     var updatedSegments = segments
+                    
+                    // Use a DispatchGroup to wait for asynchronous tasks (like fetching journey planner stops) to complete.
                     let group = DispatchGroup()
                     
+                    // Variables to hold calculated walking times.
                     var entryWalkMin: Double? = nil
                     var exitWalkMin: Double? = nil
                     
@@ -145,6 +154,10 @@ public final class RouteLogic {
     
     // MARK: - Route Processing
     
+    /// Calculates total walking and transit times and extracts detailed step/transit information from raw route steps.
+    ///
+    /// - Parameter steps: The raw steps data from the routing API.
+    /// - Returns: A tuple containing total walking time (minutes), total transit time (minutes), an array of WalkStep, and an array of TransitInfo.
     func calculateRouteTimes(from steps: [[String: Any]]) -> (Double, Double, [WalkStep], [TransitInfo]) {
         var walkMin = 0.0, transitMin = 0.0
         var walkSteps: [WalkStep] = []
@@ -209,6 +222,16 @@ public final class RouteLogic {
     
     // MARK: - Navigation
     
+    /// Navigates to the Route Summary screen with the calculated route details.
+    /// It prepares the data and pushes the view controller onto the navigation stack.
+    ///
+    /// - Parameters:
+    ///   - viewController: The view controller initiating the navigation.
+    ///   - transitInfos: The calculated transit segments.
+    ///   - walkSteps: The calculated walking steps.
+    ///   - estimated: The total estimated time as a formatted string.
+    ///   - walkToStationMin: Estimated walking time to the first station in minutes.
+    ///   - walkToDestinationMin: Estimated walking time from the last station to the destination in minutes.
     func navigateToSummary(
         from viewController: UIViewController,
         transitInfos: [TransitInfo],
@@ -236,5 +259,60 @@ public final class RouteLogic {
     }
 }
 
-   
+// MARK: - Data Models
+
+/// Represents a single train arrival prediction returned by TfL API
+// struct TfLArrivalPrediction {
+//     let id: String?
+//     let stationName: String?
+//     let lineId: String?
+//     let lineName: String?
+//     let platformName: String?
+//     let destinationName: String?
+//     let expectedArrival: Date
+//     let timeToStation: TimeInterval // Seconds until it reaches the station (naptanId)
+// }
+
+// /// Metadata for a single tube station
+// struct StationMeta {
+//     let id: String
+//     let coord: CLLocationCoordinate2D
+// }
+
+// I will also remove the duplicate CrowdLevel definition.
+// enum CrowdLevel: String, Codable {
+//     case low = "Low"
+//     case medium = "Medium"
+//     case high = "High"
+//     case unknown
+    
+//     init(raw: String?) {
+//         guard let rawValue = raw else { self = .unknown; return }
+//         self = CrowdLevel(rawValue: rawValue) ?? .unknown
+//     }
+// }
+
+// I will also remove the duplicate WalkStep definition.
+// struct WalkStep {
+//     let instruction: String
+//     let distanceText: String
+//     let durationText: String
+// }
+
+// I will also remove the duplicate TransitInfo definition.
+// struct TransitInfo: Equatable {
+//     let lineName: String
+//     let departureStation: String?
+//     let arrivalStation: String?
+//     let durationText: String
+//     let departurePlatform: String?
+//     let arrivalPlatform: String?
+//     let departureCoordinate: CLLocationCoordinate2D
+//     let arrivalCoordinate: CLLocationCoordinate2D
+//     let crowdLevel: CrowdLevel
+//     let numStops: Int?
+//     let lineColorHex: String?
+//     let delayStatus: String?
+// }
+
 
