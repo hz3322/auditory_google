@@ -1,7 +1,11 @@
 import UIKit
 import FirebaseFirestore
+import FirebaseAuth
 
 class StationToPlatformCardView: UIView {
+    private var timer: Timer?
+    private var recordingElapsed: TimeInterval = 0
+    
     // MARK: - UI Components
     private let containerView: UIView = {
         let v = UIView()
@@ -56,11 +60,23 @@ class StationToPlatformCardView: UIView {
         btn.heightAnchor.constraint(equalToConstant: 38).isActive = true
         return btn
     }()
+    
+    private let timerLabel: UILabel = {
+        let label = UILabel()
+        label.text = "0:00"
+        label.font = .monospacedDigitSystemFont(ofSize: 17, weight: .medium)
+        label.textColor = .systemOrange
+        label.textAlignment = .center
+        label.isHidden = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
 
     // MARK: - State
     private var currentStation: String?
     private var isRecording = false
     private var startTime: Date?
+    private let userId = Auth.auth().currentUser?.uid ?? "testUser"
     private let db = Firestore.firestore()
     private var durations: [TimeInterval] = []
 
@@ -78,7 +94,7 @@ class StationToPlatformCardView: UIView {
     private func setupUI() {
         backgroundColor = .clear
         addSubview(containerView)
-        let vStack = UIStackView(arrangedSubviews: [titleLabel, timeAndSourceLabel, recordButton, statsButton])
+        let vStack = UIStackView(arrangedSubviews: [titleLabel, timerLabel, timeAndSourceLabel, recordButton, statsButton])
         vStack.axis = .vertical
         vStack.spacing = 8
         vStack.alignment = .fill
@@ -114,11 +130,38 @@ class StationToPlatformCardView: UIView {
         recordButton.backgroundColor = UIColor(red: 34/255, green: 127/255, blue: 255/255, alpha: 1)
         recordButton.setTitle("Start Recording", for: .normal)
     }
+    // MARK: - recording Timer
+    private func startRecordingTimer() {
+        timerLabel.isHidden = false
+        recordingElapsed = 0
+        updateTimerLabel()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.recordingElapsed += 1
+            self.updateTimerLabel()
+        }
+    }
 
+    private func updateTimerLabel() {
+        let min = Int(recordingElapsed) / 60
+        let sec = Int(recordingElapsed) % 60
+        timerLabel.text = String(format: "%d:%02d", min, sec)
+    }
+    
+    private func stopOrCancelRecordingTimer() {
+        timer?.invalidate()
+        timer = nil
+        timerLabel.text = "00:00"
+        timerLabel.isHidden = true
+    }
+    
     // MARK: - Firestore
     private func fetchEstimatedTime() {
         guard let station = currentStation else { return }
-        db.collection("stationToPlatformTimes").document(sanitizedStationKey(station)).collection("records")
+            db.collection("users")
+            .document(userId)
+            .collection("stationToPlatformTimes")
+            .document(sanitizedStationKey(station)).collection("records")
             .order(by: "timestamp", descending: true).limit(to: 1)
             .getDocuments { [weak self] snapshot, error in
                 guard let self = self else { return }
@@ -132,8 +175,12 @@ class StationToPlatformCardView: UIView {
 
     private func fetchStats() {
         guard let station = currentStation else { return }
-        db.collection("stationToPlatformTimes").document(sanitizedStationKey(station)).collection("records")
-            .getDocuments { [weak self] snapshot, error in
+        db.collection("users")
+             .document(userId)
+             .collection("stationToPlatformTimes")
+             .document(sanitizedStationKey(station))
+             .collection("records")
+             .getDocuments { [weak self] snapshot, error in
                 guard let self = self else { return }
                 self.durations = snapshot?.documents.compactMap { $0.data()["duration"] as? TimeInterval } ?? []
                 let count = self.durations.count
@@ -147,8 +194,14 @@ class StationToPlatformCardView: UIView {
             "duration": duration,
             "timestamp": Timestamp(date: Date())
         ]
-        db.collection("stationToPlatformTimes").document(sanitizedStationKey(station)).collection("records")
-            .addDocument(data: record) { [weak self] error in
+
+        let stationKey = sanitizedStationKey(station)
+        db.collection("users")
+          .document(userId)
+          .collection("stationToPlatformTimes")
+          .document(stationKey)
+          .collection("records")
+          .addDocument(data: record) { [weak self] error in
                 guard let self = self else { return }
                 self.setTimeUI(time: duration, source: "You")
                 self.fetchStats()
@@ -187,21 +240,49 @@ class StationToPlatformCardView: UIView {
             isRecording = true
             startTime = Date()
             setRecordingUI()
+            startRecordingTimer()
             recordButton.setTitle("Stop Recording", for: .normal)
             recordButton.backgroundColor = .systemRed
             statsButton.isEnabled = false
             statsButton.alpha = 0.5
         } else {
-            guard let startTime = startTime else { return }
-            isRecording = false
-            recordButton.setTitle("Start Recording", for: .normal)
-            recordButton.backgroundColor = UIColor(red: 34/255, green: 127/255, blue: 255/255, alpha: 1)
-            statsButton.isEnabled = true
-            statsButton.alpha = 1.0
-            let duration = Date().timeIntervalSince(startTime)
-            uploadNewRecord(duration: duration)
-        }
-    }
+            // comfirm if using this data
+                   guard let startTime = startTime else { return }
+                   let duration = Date().timeIntervalSince(startTime)
+
+                   // 这里加弹窗
+                   if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                      let vc = windowScene.windows.first?.rootViewController {
+                       let alert = UIAlertController(
+                           title: "Save This Recording?",
+                           message: String(format: "You just recorded %d:%02d. Save?", Int(duration) / 60, Int(duration) % 60),
+                           preferredStyle: .alert
+                       )
+                       alert.addAction(UIAlertAction(title: "Save", style: .default, handler: { _ in
+                           self.uploadNewRecord(duration: duration)
+                           self.resetUIAfterRecording()
+                       }))
+                       alert.addAction(UIAlertAction(title: "Discard", style: .cancel, handler: { _ in
+                           self.resetUIAfterRecording()
+                       }))
+                       vc.present(alert, animated: true)
+                   } else {
+                       // fallback，save directly
+                       self.uploadNewRecord(duration: duration)
+                       self.resetUIAfterRecording()
+                   }
+               }
+           }
+
+       private func resetUIAfterRecording() {
+           isRecording = false
+           recordButton.setTitle("Start Recording", for: .normal)
+           recordButton.backgroundColor = UIColor(red: 34/255, green: 127/255, blue: 255/255, alpha: 1)
+           statsButton.isEnabled = true
+           statsButton.alpha = 1.0
+           setTimeUI(time: 120, source: "Default") // or re-fetch
+           stopOrCancelRecordingTimer()
+       }
 
     @objc private func statsButtonTapped() {
         guard !durations.isEmpty else {

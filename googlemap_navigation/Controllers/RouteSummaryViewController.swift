@@ -469,7 +469,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             
             // Check for transfer leg and add transfer card if necessary
             if index < transitInfos.count - 1 {
-                 viewsToAdd.append(makeCard(title: "🚶‍♀️ Transfer", subtitle: "Est. Transfer Time")) // Placeholder subtitle
+                viewsToAdd.append(makeCard(title: "🚶‍♀️ Transfer", subtitle: "\(transferTimesSec)")) // Placeholder subtitle
              }
              
             viewsToAdd.append(makeTransitCard(info: transitLegInfo, isTransfer: index > 0, legIndex: index))
