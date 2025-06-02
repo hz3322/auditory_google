@@ -181,7 +181,7 @@ public final class TfLDataService {
     }
     
 
-    // Caches all [stationName: naptanId] for lookup (used by resolveStationId)
+    // Caches all [stationName: naptanId] for lookup (used by resolveStationId) at the init step
     func fetchAllTubeStationIds(completion: @escaping () -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/Mode/tube"
         guard let url = URL(string: urlStr) else { completion(); return }
@@ -257,7 +257,6 @@ public final class TfLDataService {
     }
 
     // MARK: - Arrival Data
-
     // Fetches available line IDs for a station by naptanId
     func fetchAvailableLines(for naptanId: String, completion: @escaping ([String]) -> Void) {
         let urlStr = "https://api.tfl.gov.uk/StopPoint/\(naptanId)"

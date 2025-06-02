@@ -744,10 +744,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 return
             }
             
-            // Use DispatchGroup to wait for both stop sequence and arrivals to fetch
+            // Use DispatchGroup to wait for stop sequence
             let fetchGroup = DispatchGroup()
             var stopSequence: [String]? = nil
-            var allArrivals: [TfLArrivalPrediction] = []
             
             // Fetch journey planner stop list from the *current segment's departure* to the *entire route's destination*.
             if let depCoord = departureStationCoord, let routeDestCoord = arrivalStationCoord {
@@ -761,15 +760,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             } else {
                 print("[RouteSummaryVC] Skipping fetchJourneyPlannerStops due to missing coordinates.")
             }
-
-            // Fetch all arrivals for the station
-            fetchGroup.enter()
-            TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: nil) { arrivals in
-                allArrivals = arrivals
-                fetchGroup.leave()
-            }
-            
-            
             
             fetchGroup.notify(queue: .main) {
                 catchSectionView.arrangedSubviews
@@ -781,91 +771,149 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     catchTrainCard.layoutIfNeeded()
                     return
                 }
-                let stopList = stopSequence.map { self.normalizeStationName($0) }
-                let depNorm = self.normalizeStationName(departureStationName)
                 
-                // 🟢 自动目标站名匹配
+                var stopList = stopSequence.map { self.normalizeStationName($0) }
+                let depNorm = self.normalizeStationName(departureStationName)
+            
                 guard let targetTfLName = self.bestMatchingStationName(in: stopSequence, for: targetStationName) else {
                     self.addErrorLabel("Target station not found in this route segment.", to: catchSectionView)
                     catchTrainCard.layoutIfNeeded()
                     print("ERROR: Cannot match target \(targetStationName) in \(stopSequence)")
                     return
                 }
+                
                 let targetNorm = self.normalizeStationName(targetTfLName)
                 print("[RouteSummaryVC] Smart matched target station: \(targetTfLName) [norm: \(targetNorm)]")
                 
+                // 创建 stopSequence 的可变副本
+                var mutableStopSequence = stopSequence
                 
-                for prediction in allArrivals {
-                    let rawDest = prediction.destinationName ?? "<empty>"
-                    let normDest = self.normalizeStationName(rawDest)
-                    print("[DEBUG] prediction.destinationName: '\(rawDest)' | norm: '\(normDest)'")
-                }
-                print("[DEBUG] stopList: \(stopList)")
-                print("[DEBUG] targetNorm: \(targetNorm)")
-                print("[DEBUG] depNorm: \(depNorm)")
-                
-                // ⭐️ Filter
-                let now = Date()
-                let validArrivals = allArrivals.filter { prediction in
-                    let destNorm = self.normalizeStationName(prediction.destinationName ?? "")
-                    let depIdx = stopList.firstIndex(of: depNorm) ?? 0 // fallback to first
-                    guard let targetIdx = stopList.firstIndex(of: targetNorm) else { return false }
-                    // destIdx 可以为 nil（终点不在 stopList），这种情况默认算目标之后
-                    let destIdx = stopList.firstIndex(of: destNorm)
-                    if let destIdx = destIdx {
-                        return depIdx <= targetIdx && targetIdx <= destIdx
-                    } else {
-                        // 终点未知或者更远
-                        return depIdx <= targetIdx
-                    }
+                // handle the problem of tfl journey planner with missing valid drepature station
+                if stopList.first != depNorm {
+                    stopList.insert(depNorm, at: 0)
+                    // 同时更新 mutableStopSequence 以保持同步
+                    mutableStopSequence.insert(departureStationName, at: 0)
                 }
                 
-                print("[RouteSummaryVC] Filtered down to \(validArrivals.count) valid arrivals.")
-
-                if validArrivals.isEmpty {
-                    self.addErrorLabel("No upcoming train data available for your destination.", to: catchSectionView)
+                guard let depIdx = stopList.firstIndex(of: depNorm),
+                      let targetIdx = stopList.firstIndex(of: targetNorm) else {
+                    print("[DEBUG] depNorm = \(depNorm), targetNorm = \(targetNorm), stopList = \(stopList)")
+                    self.addErrorLabel("Could not find station indices in stop sequence.", to: catchSectionView)
                     catchTrainCard.layoutIfNeeded()
                     return
                 }
-
-                // 生成CatchInfo
-                let catchInfos = validArrivals.map { prediction -> CatchInfo in
-                    let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
-                    let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
-                    let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
-                    return CatchInfo(
-                        lineName: prediction.lineName ?? (prediction.lineId ?? ""),
-                        lineColorHex: self.TfLLinesColorMap[prediction.lineId ?? ""] ?? "#007AFF",
-                        fromStation: departureStationName,
-                        toStation: prediction.destinationName ?? "",
-                        stops: [],
-                        expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
-                        expectedArrivalDate: prediction.expectedArrival,
-                        timeToStation: prediction.timeToStation,
-                        timeLeftToCatch: timeLeftToCatch,
-                        catchStatus: status
-                    )
-                }.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
-
-                // 更新ProgressService
-                if let firstTrain = catchInfos.first(where: { $0.catchStatus != .missed }) ?? catchInfos.first {
-                    self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
-                    self.setupProgressService()
-                } else if transitLegInfo == self.transitInfos.first {
-                    self.addErrorLabel("No catchable trains for the first leg.", to: catchSectionView)
+                
+                // 确保索引在有效范围内
+                let minIdx = max(0, min(depIdx, targetIdx))
+                let maxIdx = min(stopList.count - 1, max(depIdx, targetIdx))
+                
+                // 确保 minIdx 不大于 maxIdx
+                guard minIdx <= maxIdx else {
+                    print("[DEBUG] Invalid indices: minIdx = \(minIdx), maxIdx = \(maxIdx), stopList count = \(stopList.count)")
+                    self.addErrorLabel("Invalid station sequence.", to: catchSectionView)
+                    catchTrainCard.layoutIfNeeded()
+                    return
                 }
-
-                // 展示UI
-                let arrivalsToDisplay = Array(catchInfos.prefix(5))
-                for singleCatchInfo in arrivalsToDisplay {
-                    let row = CatchInfoRowView(info: singleCatchInfo)
-                    row.alpha = 0
-                    catchSectionView.addArrangedSubview(row)
-                    UIView.animate(withDuration: 0.35, delay: 0, options: .curveEaseOut, animations: {
-                        row.alpha = 1
-                    })
+                
+                // 使用更新后的 mutableStopSequence
+                let journeySegmentStops = Array(mutableStopSequence[minIdx...maxIdx])
+                print("[DEBUG] Journey segment stops: \(journeySegmentStops)")
+                
+                // --- 加一个 DispatchGroup 并发拉每一站的 lineId ---
+                let lineGroup = DispatchGroup()
+                var lineSets: [Set<String>] = []
+                
+                for stop in journeySegmentStops {
+                    lineGroup.enter()
+                    TfLDataService.shared.resolveStationId(for: stop) { naptanId in
+                        guard let naptanId = naptanId else { 
+                            print("[DEBUG] Could not resolve station ID for: \(stop)")
+                            lineGroup.leave()
+                            return 
+                        }
+                        TfLDataService.shared.fetchAvailableLines(for: naptanId) { lineIds in
+                            print("[DEBUG] Fetched \(lineIds.count) lines for station: \(stop)")
+                            lineSets.append(Set(lineIds))
+                            lineGroup.leave()
+                        }
+                    }
                 }
-                catchTrainCard.layoutIfNeeded()
+                
+                lineGroup.notify(queue: .main) {
+                    guard let firstSet = lineSets.first, !lineSets.isEmpty else {
+                        self.addErrorLabel("Could not determine valid lines for journey segment.", to: catchSectionView)
+                        catchTrainCard.layoutIfNeeded()
+                        return
+                    }
+                    
+                    let validLineIds = lineSets.reduce(firstSet) { $0.intersection($1) }
+                    print("[RouteSummaryVC] Valid lineIds for segment: \(validLineIds)")
+                    
+                    // 只用这些 validLineIds 去 fetchArrivals
+                    TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: Array(validLineIds)) { arrivals in
+                        let now = Date()
+                        let validArrivals = arrivals.filter { prediction in
+                            let destNorm = self.normalizeStationName(prediction.destinationName ?? "")
+                            let depIdx = stopList.firstIndex(of: depNorm) ?? 0 // fallback to first
+                            guard let targetIdx = stopList.firstIndex(of: targetNorm) else { return false }
+                            // destIdx 可以为 nil（终点不在 stopList），这种情况默认算目标之后
+                            let destIdx = stopList.firstIndex(of: destNorm)
+                            if let destIdx = destIdx {
+                                return depIdx <= targetIdx && targetIdx <= destIdx
+                            } else {
+                                // 终点未知或者更远
+                                return depIdx <= targetIdx
+                            }
+                        }
+                        
+                        print("[RouteSummaryVC] Filtered down to \(validArrivals.count) valid arrivals.")
+                        
+                        if validArrivals.isEmpty {
+                            self.addErrorLabel("No upcoming train data available for your destination.", to: catchSectionView)
+                            catchTrainCard.layoutIfNeeded()
+                            return
+                        }
+                        
+                        // 生成CatchInfo
+                        let catchInfos = validArrivals.map { prediction -> CatchInfo in
+                            let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
+                            let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
+                            let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
+                            return CatchInfo(
+                                lineName: prediction.lineName ?? (prediction.lineId ?? ""),
+                                lineColorHex: self.TfLLinesColorMap[prediction.lineId ?? ""] ?? "#007AFF",
+                                fromStation: departureStationName,
+                                toStation: prediction.destinationName ?? "",
+                                stops: [],
+                                expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
+                                expectedArrivalDate: prediction.expectedArrival,
+                                timeToStation: prediction.timeToStation,
+                                timeLeftToCatch: timeLeftToCatch,
+                                catchStatus: status
+                            )
+                        }.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
+                        
+                        // 更新ProgressService
+                        if let firstTrain = catchInfos.first(where: { $0.catchStatus != .missed }) ?? catchInfos.first {
+                            self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
+                            self.setupProgressService()
+                        } else if transitLegInfo == self.transitInfos.first {
+                            self.addErrorLabel("No catchable trains for the first leg.", to: catchSectionView)
+                        }
+                        
+                        // 展示UI
+                        let arrivalsToDisplay = Array(catchInfos.prefix(5))
+                        for singleCatchInfo in arrivalsToDisplay {
+                            let row = CatchInfoRowView(info: singleCatchInfo)
+                            row.alpha = 0
+                            catchSectionView.addArrangedSubview(row)
+                            UIView.animate(withDuration: 0.35, delay: 0, options: .curveEaseOut, animations: {
+                                row.alpha = 1
+                            })
+                        }
+                        catchTrainCard.layoutIfNeeded()
+                    }
+                }
             }
         }
     }
