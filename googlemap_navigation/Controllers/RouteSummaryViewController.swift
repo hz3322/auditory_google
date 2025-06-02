@@ -440,7 +440,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             stationToPlatformCard.tag = stationToPlatformCardTag
 
             if let depStation = transitLegInfo.departureStation {
-                stationToPlatformCard.configure(with: depStation)  // 不要再校验 stationCoordinates
+                stationToPlatformCard.configure(with: depStation)
                 if stationCoordinates[depStation] == nil {
                     print("[RouteSummaryVC] Could not find StationMeta for station: \(depStation)")
             
@@ -750,7 +750,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             var allArrivals: [TfLArrivalPrediction] = []
             
             // Fetch journey planner stop list from the *current segment's departure* to the *entire route's destination*.
-            if let depCoord = departureStationCoord, let routeDestCoord = self.routeDestinationCoordinate {
+            if let depCoord = departureStationCoord, let routeDestCoord = arrivalStationCoord {
                 print("[RouteSummaryVC] Fetching stop sequence from current segment departure to route destination.")
                 fetchGroup.enter()
                 TfLDataService.shared.fetchJourneyPlannerStops(fromCoord: depCoord, toCoord: routeDestCoord) { sequence in
@@ -808,19 +808,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 let now = Date()
                 let validArrivals = allArrivals.filter { prediction in
                     let destNorm = self.normalizeStationName(prediction.destinationName ?? "")
-                    // 1. 到终点直接过
-                    if destNorm == targetNorm { return true }
-                    // 2. 如果终点在stopList且目标之后
-                    if let targetIdx = stopList.firstIndex(of: targetNorm),
-                       let depIdx = stopList.firstIndex(of: depNorm) {
-                        if let destIdx = stopList.firstIndex(of: destNorm) {
-                            return destIdx >= targetIdx && depIdx <= targetIdx
-                        } else {
-                            // 3. 如果终点不在stopList，说明这是更远的终点——默认可以经过目标
-                            return depIdx <= targetIdx
-                        }
+                    let depIdx = stopList.firstIndex(of: depNorm) ?? 0 // fallback to first
+                    guard let targetIdx = stopList.firstIndex(of: targetNorm) else { return false }
+                    // destIdx 可以为 nil（终点不在 stopList），这种情况默认算目标之后
+                    let destIdx = stopList.firstIndex(of: destNorm)
+                    if let destIdx = destIdx {
+                        return depIdx <= targetIdx && targetIdx <= destIdx
+                    } else {
+                        // 终点未知或者更远
+                        return depIdx <= targetIdx
                     }
-                    return false
                 }
                 
                 print("[RouteSummaryVC] Filtered down to \(validArrivals.count) valid arrivals.")
@@ -873,19 +870,36 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         }
     }
 
-    // MARK: - 辅助方法，智能目标站匹配（贴在你的VC里就行）
+  
     private func bestMatchingStationName(in stopList: [String], for rawTargetName: String) -> String? {
         let normTarget = normalizeStationName(rawTargetName)
-        // 完全相等
+        
+        // First try exact match
         if let exact = stopList.first(where: { normalizeStationName($0) == normTarget }) {
             return exact
         }
-        // 部分包含
+        
+        // If target is a postal code, try to find the nearest station
+        if normTarget.contains("ec") || normTarget.contains("e1") || normTarget.contains("e2") {
+            // For EC3N 4AB, try to match with Tower Hill or Monument
+            if normTarget.contains("ec3") {
+                if let towerHill = stopList.first(where: { normalizeStationName($0).contains("tower hill") }) {
+                    return towerHill
+                }
+                if let monument = stopList.first(where: { normalizeStationName($0).contains("monument") }) {
+                    return monument
+                }
+            }
+        }
+        
+        // Try partial match
         if let partial = stopList.first(where: { normalizeStationName($0).contains(normTarget) || normTarget.contains(normalizeStationName($0)) }) {
             return partial
         }
-        // fallback（可以扩展Levenshtein距离），现在用前两种已经cover几乎所有真实case
-        return nil
+        
+        // If still no match, try to find the last station in the sequence
+        // This is a fallback for when the target is beyond the last station
+        return stopList.last
     }
 
     // 你的normalizeStationName方法

@@ -295,8 +295,7 @@ public final class TfLDataService {
     func fetchAllArrivals(for naptanId: String, relevantLineIds: [String]?, completion: @escaping ([TfLArrivalPrediction]) -> Void) {
         fetchAvailableLines(for: naptanId) { allAvailableLineIdsAtStation in
             let linesToFetch = relevantLineIds ?? allAvailableLineIdsAtStation
-//            let finalLineIds = relevantLineIds != nil ? allAvailableLineIdsAtStation.filter { linesToFetch.contains($0) } : linesToFetch
-//            print("-------------- LOOK HERE -----------Fetch ALl arrivals and the final line ids are : \(finalLineIds)")
+
             let group = DispatchGroup()
             var allArrivals: [TfLArrivalPrediction] = []
             for lineId in linesToFetch {
@@ -433,7 +432,7 @@ public final class TfLDataService {
         }
         
         let predictions = try JSONDecoder().decode([TfLArrivalPrediction].self, from: data)
-        print("[TfLDataService] Received \(predictions.count) arrival predictions")
+        print("[TfLDataService] Received \(predictions.count) arrival predictions at \(stationId)")
         print("[TfLDataService] Successfully parsed \(predictions.count) arrival predictions")
         
         return predictions
