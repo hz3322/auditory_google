@@ -440,12 +440,10 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             stationToPlatformCard.tag = stationToPlatformCardTag
 
             if let depStation = transitLegInfo.departureStation {
-                // Assuming stationCoordinates contains StationMeta objects keyed by station name
-                if let stationMeta = stationCoordinates[depStation] {
-                    stationToPlatformCard.configure(with: depStation)
-                } else {
+                stationToPlatformCard.configure(with: depStation)  // 不要再校验 stationCoordinates
+                if stationCoordinates[depStation] == nil {
                     print("[RouteSummaryVC] Could not find StationMeta for station: \(depStation)")
-                    // Handle case where station meta is not found, maybe show an error on the card
+            
                 }
             }
 
