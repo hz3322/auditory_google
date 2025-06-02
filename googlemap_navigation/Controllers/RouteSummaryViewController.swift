@@ -103,6 +103,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     
   
     
+    // MARK: - Auto Refresh Properties
+    private var arrivalsRefreshTimer: Timer?
+    private let refreshInterval: TimeInterval = 3.0
+    private let missedThreshold: TimeInterval = 100.0 // 100 seconds threshold for missed trains
+    
+    // MARK: - Rate Limiting Properties
+    private var lastLineFetchTime: [String: Date] = [:]
+    private let lineFetchCooldown: TimeInterval = 2.0 // 2 seconds cooldown between requests for the same station
+    private var isRefreshing = false
+    
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -849,7 +859,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     let validLineIds = lineSets.reduce(firstSet) { $0.intersection($1) }
                     print("[RouteSummaryVC] Valid lineIds for segment: \(validLineIds)")
                     
-                    // 只用这些 validLineIds 去 fetchArrivals
+                    // only validLineIds to fetchArrivals
                     TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: Array(validLineIds)) { arrivals in
                         let now = Date()
                         let validArrivals = arrivals.filter { prediction in
@@ -880,6 +890,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                             let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
                             let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
                             return CatchInfo(
+//                                trainId: "\(prediction.lineId ?? "")_\(prediction.expectedArrival.timeIntervalSince1970)",
                                 lineName: prediction.lineName ?? (prediction.lineId ?? ""),
                                 lineColorHex: self.TfLLinesColorMap[prediction.lineId ?? ""] ?? "#007AFF",
                                 fromStation: departureStationName,

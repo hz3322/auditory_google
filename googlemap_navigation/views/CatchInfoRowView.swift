@@ -1,6 +1,8 @@
 import UIKit
 
 class CatchInfoRowView: UIView {
+    var onMissed: (() -> Void)?
+    
     // MARK: - Properties
     private let lineBadgeLabel = PaddingLabel()
     private let arrivalTimeLabel = UILabel()
@@ -113,7 +115,7 @@ class CatchInfoRowView: UIView {
         )
         
         // 刷新UI
-        updateUI(with: updatedInfo)
+        update(with: updatedInfo)
         
         // Stop timer if train is definitely missed
         if newStatus == .missed && newTimeLeft < -300 {
@@ -122,35 +124,47 @@ class CatchInfoRowView: UIView {
     }
     
     // MARK: - UI Updates
+    public func update(with info: CatchInfo) {
+           self.info = info
+           updateUI(with: info)
+        if info.catchStatus == .missed{
+            onMissed?()
+        }
+       }
+       
+    
     private func updateUI(with info: CatchInfo) {
-        let timeLeftRounded = Int(round(info.timeLeftToCatch))
-        var statusText = info.catchStatus.displayText
-        
-        if info.catchStatus != .missed {
-            statusText += " · \(abs(timeLeftRounded))s"
-        } else if timeLeftRounded < 0 {
-            statusText += " (by \(abs(timeLeftRounded))s)"
+            arrivalTimeLabel.text = info.expectedArrival
+            
+            let timeLeftRounded = Int(round(info.timeLeftToCatch))
+            var statusText = info.catchStatus.displayText
+            
+            if info.catchStatus != .missed {
+                statusText += " · \(abs(timeLeftRounded))s"
+            } else if timeLeftRounded < 0 {
+                statusText += " (by \(abs(timeLeftRounded))s)"
+            }
+            
+            statusLabel.text = statusText
+            statusLabel.textColor = info.catchStatus.displayColor
+            
+            // Update icon
+            if let iconName = info.catchStatus.systemIconName,
+               let iconImage = UIImage(systemName: iconName) {
+                let attachment = NSTextAttachment()
+                let tintedImage = iconImage.withTintColor(info.catchStatus.displayColor, renderingMode: .alwaysOriginal)
+                attachment.image = tintedImage
+                let imageSize = iconLabel.font.pointSize
+                attachment.bounds = CGRect(x: 0, y: -2, width: imageSize, height: imageSize)
+                iconLabel.attributedText = NSAttributedString(attachment: attachment)
+            }
+            
+            // Update background
+            UIView.animate(withDuration: 0.3) {
+                self.backgroundColor = info.catchStatus.displayColor.withAlphaComponent(0.08)
+            }
         }
-        
-        statusLabel.text = statusText
-        statusLabel.textColor = info.catchStatus.displayColor
-        
-        // Update icon
-        if let iconName = info.catchStatus.systemIconName,
-           let iconImage = UIImage(systemName: iconName) {
-            let attachment = NSTextAttachment()
-            let tintedImage = iconImage.withTintColor(info.catchStatus.displayColor, renderingMode: .alwaysOriginal)
-            attachment.image = tintedImage
-            let imageSize = iconLabel.font.pointSize
-            attachment.bounds = CGRect(x: 0, y: -2, width: imageSize, height: imageSize)
-            iconLabel.attributedText = NSAttributedString(attachment: attachment)
-        }
-        
-        // Update background
-        UIView.animate(withDuration: 0.3) {
-            self.backgroundColor = info.catchStatus.displayColor.withAlphaComponent(0.08)
-        }
-    }
+
     
     // MARK: - Lifecycle
     override func didMoveToWindow() {
