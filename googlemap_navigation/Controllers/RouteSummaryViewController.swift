@@ -436,8 +436,13 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         }
         
         for (index, transitLegInfo) in transitInfos.enumerated() {
-            let stationToPlatformCard = makeCard(title: "🚉 Station to Platform", subtitle: "Approx. 2 minutes")
+            let stationToPlatformCard = StationToPlatformCardView()
             stationToPlatformCard.tag = stationToPlatformCardTag
+
+            if let depStation = transitLegInfo.departureStation {
+                stationToPlatformCard.configure(with: depStation)
+            }
+
             viewsToAdd.append(stationToPlatformCard)
 
             let catchSectionView = UIStackView()

@@ -1,10 +1,24 @@
 import Foundation
 import CoreLocation
 
+// MARK: - Constants
+private let baseURL = "https://api.tfl.gov.uk"
+private let apiKey = APIKeys.tflAppKey
+
+// MARK: - Error Types
+enum TfLError: Error {
+    case invalidURL
+    case networkError(Error)
+    case invalidResponse
+    case decodingError(Error)
+    case noData
+    case serverError(statusCode: Int)
+}
+
 // MARK: - Data Models
 
 /// Represents a single train arrival prediction returned by TfL API
-struct TfLArrivalPrediction {
+struct TfLArrivalPrediction: Decodable {
     let id: String?
     let stationName: String?
     let lineId: String?
@@ -13,6 +27,58 @@ struct TfLArrivalPrediction {
     let destinationName: String?
     let expectedArrival: Date
     let timeToStation: TimeInterval // Seconds until it reaches the station (naptanId)
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case stationName
+        case lineId
+        case lineName
+        case platformName
+        case destinationName
+        case expectedArrival
+        case timeToStation
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        stationName = try container.decodeIfPresent(String.self, forKey: .stationName)
+        lineId = try container.decodeIfPresent(String.self, forKey: .lineId)
+        lineName = try container.decodeIfPresent(String.self, forKey: .lineName)
+        platformName = try container.decodeIfPresent(String.self, forKey: .platformName)
+        destinationName = try container.decodeIfPresent(String.self, forKey: .destinationName)
+        
+        let dateString = try container.decode(String.self, forKey: .expectedArrival)
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds, .withColonSeparatorInTimeZone]
+        
+        if let date = isoFormatter.date(from: dateString) {
+            expectedArrival = date
+        } else {
+            let legacyFormatter = DateFormatter()
+            legacyFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+            legacyFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+            if let date = legacyFormatter.date(from: dateString) {
+                expectedArrival = date
+            } else {
+                throw DecodingError.dataCorruptedError(forKey: .expectedArrival, in: container, debugDescription: "Date string does not match format")
+            }
+        }
+        
+        timeToStation = try container.decode(TimeInterval.self, forKey: .timeToStation)
+    }
+    
+    // Keep the existing initializer for manual creation
+    init(id: String?, stationName: String?, lineId: String?, lineName: String?, platformName: String?, destinationName: String?, expectedArrival: Date, timeToStation: TimeInterval) {
+        self.id = id
+        self.stationName = stationName
+        self.lineId = lineId
+        self.lineName = lineName
+        self.platformName = platformName
+        self.destinationName = destinationName
+        self.expectedArrival = expectedArrival
+        self.timeToStation = timeToStation
+    }
 }
 
 /// Metadata for a single tube station
