@@ -2,6 +2,7 @@ import UIKit
 import FirebaseFirestore
 import FirebaseAuth
 
+/// A view that displays and manages station to platform walking time information
 class StationToPlatformCardView: UIView {
     private var timer: Timer?
     private var recordingElapsed: TimeInterval = 0
@@ -21,17 +22,26 @@ class StationToPlatformCardView: UIView {
 
     private let titleLabel: UILabel = {
         let label = UILabel()
-        label.text = "Station to Platform"
-        label.font = .systemFont(ofSize: 15, weight: .semibold)
+        label.font = .systemFont(ofSize: 19, weight: .semibold)
         label.textColor = .label
+        label.translatesAutoresizingMaskIntoConstraints = false
+        // Initial text will be set in configure
+        return label
+    }()
+
+    private let timeLabel: UILabel = {
+        let label = UILabel()
+        label.text = "Est. --:--"
+        label.font = .systemFont(ofSize: 23, weight: .bold)
+        label.textColor = .systemBlue
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
 
-    private let timeAndSourceLabel: UILabel = {
+    private let statusLabel: UILabel = {
         let label = UILabel()
-        label.text = "Est. --:-- (Default)"
-        label.font = .systemFont(ofSize: 14)
+        label.text = ""
+        label.font = .systemFont(ofSize: 15, weight: .medium)
         label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -40,22 +50,34 @@ class StationToPlatformCardView: UIView {
     private let recordButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.setTitle("Start Recording", for: .normal)
-        btn.titleLabel?.font = .systemFont(ofSize: 16, weight: .bold)
-        btn.backgroundColor = UIColor(red: 34/255, green: 127/255, blue: 255/255, alpha: 1) // 主题蓝
+        btn.titleLabel?.font = .systemFont(ofSize: 17, weight: .bold)
+        btn.backgroundColor = UIColor(red: 34/255, green: 127/255, blue: 255/255, alpha: 1) // Theme blue
         btn.setTitleColor(.white, for: .normal)
-        btn.layer.cornerRadius = 12
+        btn.layer.cornerRadius = 14
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        btn.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        btn.setContentHuggingPriority(.defaultLow, for: .horizontal) // Allow button to compress
         return btn
+    }()
+
+    private let elapsedTimeLabel: UILabel = { // New label for elapsed time
+        let label = UILabel()
+        label.font = .monospacedDigitSystemFont(ofSize: 17, weight: .bold)
+        label.textColor = .systemGray // Or a distinct color for elapsed time
+        label.textAlignment = .right // Align right
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isHidden = true // Initially hidden
+        label.setContentHuggingPriority(.defaultHigh, for: .horizontal) // Prefer to keep its intrinsic content size
+        return label
     }()
 
     private let statsButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.setTitle("View Stats", for: .normal)
-        btn.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        btn.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
         btn.setTitleColor(.systemBlue, for: .normal)
         btn.backgroundColor = UIColor.systemGray6
-        btn.layer.cornerRadius = 10
+        btn.layer.cornerRadius = 12
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.heightAnchor.constraint(equalToConstant: 38).isActive = true
         return btn
@@ -73,18 +95,22 @@ class StationToPlatformCardView: UIView {
     }()
 
     // MARK: - State
-    private var currentStation: String?
+    private var stationNaptanId: String? // Use naptanId for Firestore
+    private var stationDisplayName: String? // Store display name for UI
     private var isRecording = false
     private var startTime: Date?
     private let userId = Auth.auth().currentUser?.uid ?? "testUser"
     private let db = Firestore.firestore()
+    private var startTime: Date?
     private var durations: [TimeInterval] = []
+    private var recordingTimer: Timer? // Timer for elapsed time
 
     // MARK: - Init
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupUI()
     }
+
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupUI()
@@ -96,7 +122,7 @@ class StationToPlatformCardView: UIView {
         addSubview(containerView)
         let vStack = UIStackView(arrangedSubviews: [titleLabel, timerLabel, timeAndSourceLabel, recordButton, statsButton])
         vStack.axis = .vertical
-        vStack.spacing = 8
+        vStack.spacing = 10
         vStack.alignment = .fill
         vStack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -107,22 +133,32 @@ class StationToPlatformCardView: UIView {
             containerView.trailingAnchor.constraint(equalTo: self.trailingAnchor),
             containerView.bottomAnchor.constraint(equalTo: self.bottomAnchor),
 
-            vStack.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 16),
-            vStack.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
-            vStack.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
-            vStack.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16)
+            vStack.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20),
+            vStack.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
+            vStack.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20),
+            vStack.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: 20) // Adjusted bottom spacing
         ])
+
+        // Ensure recordStack is constrained correctly within the vStack
+        recordStack.leadingAnchor.constraint(equalTo: vStack.leadingAnchor).isActive = true
+        recordStack.trailingAnchor.constraint(equalTo: vStack.trailingAnchor).isActive = true
 
         recordButton.addTarget(self, action: #selector(recordButtonTapped), for: .touchUpInside)
         statsButton.addTarget(self, action: #selector(statsButtonTapped), for: .touchUpInside)
+
+        // Initial state of record button
+        recordButton.isEnabled = false
+        recordButton.alpha = 0.5
     }
 
     // MARK: - Public API
-    func configure(with station: String) {
-        currentStation = station
-        timeAndSourceLabel.text = "Est. --:-- (Default)"
-        timeAndSourceLabel.textColor = .secondaryLabel
-        durations = []
+    func configure(stationName: String) {
+//        self.stationNaptanId = naptanId
+        self.stationDisplayName = stationName
+        self.titleLabel.text = stationName // Set title label text
+        self.timeLabel.text = "Est. --:--"
+        self.statusLabel.text = ""
+        self.durations = []
         fetchEstimatedTime()
         fetchStats()
         recordButton.isEnabled = true
@@ -165,8 +201,13 @@ class StationToPlatformCardView: UIView {
             .order(by: "timestamp", descending: true).limit(to: 1)
             .getDocuments { [weak self] snapshot, error in
                 guard let self = self else { return }
+                if let error = error {
+                    print("Error fetching estimated time: \(error.localizedDescription)")
+                    self.setTimeUI(time: 120, source: "Default")
+                    return
+                }
                 if let doc = snapshot?.documents.first, let time = doc.data()["duration"] as? TimeInterval {
-                    self.setTimeUI(time: time, source: "Crowdsourced")
+                    self.setTimeUI(time: time, source: "Database")
                 } else {
                     self.setTimeUI(time: 120, source: "Default")
                 }
@@ -182,6 +223,10 @@ class StationToPlatformCardView: UIView {
              .collection("records")
              .getDocuments { [weak self] snapshot, error in
                 guard let self = self else { return }
+                if let error = error {
+                    print("Error fetching stats: \(error.localizedDescription)")
+                    return
+                }
                 self.durations = snapshot?.documents.compactMap { $0.data()["duration"] as? TimeInterval } ?? []
                 let count = self.durations.count
                 self.statsButton.setTitle("View Stats (\(count))", for: .normal)
@@ -189,7 +234,7 @@ class StationToPlatformCardView: UIView {
     }
 
     private func uploadNewRecord(duration: TimeInterval) {
-        guard let station = currentStation else { return }
+        guard let naptanId = stationNaptanId else { return } // Use naptanId
         let record: [String: Any] = [
             "duration": duration,
             "timestamp": Timestamp(date: Date())
@@ -203,8 +248,14 @@ class StationToPlatformCardView: UIView {
           .collection("records")
           .addDocument(data: record) { [weak self] error in
                 guard let self = self else { return }
-                self.setTimeUI(time: duration, source: "You")
-                self.fetchStats()
+                if let error = error {
+                    print("Error uploading record: \(error.localizedDescription)")
+                    self.showAlert(title: "Error", message: "Failed to upload record")
+                } else {
+                    print("Record uploaded successfully")
+                    self.setTimeUI(time: duration, source: "You")
+                    self.fetchStats()
+                }
             }
     }
 
@@ -212,26 +263,38 @@ class StationToPlatformCardView: UIView {
     private func setTimeUI(time: TimeInterval, source: String) {
         let min = Int(time) / 60
         let sec = Int(time) % 60
-        let sourceDesc: String
-        switch source {
-            case "You":      sourceDesc = "You"
-            case "Crowdsourced": sourceDesc = "Crowdsourced"
-            case "Default":  sourceDesc = "Default"
-            default:         sourceDesc = source
-        }
-        timeAndSourceLabel.text = String(format: "Est. %d:%02d  (%@)", min, sec, sourceDesc)
+        timeLabel.text = String(format: "Est. %d:%02d", min, sec)
+        statusLabel.text = "Source: \(source)"
         if source == "You" {
-            timeAndSourceLabel.textColor = .systemGreen
+            timeLabel.textColor = .systemGreen
+            statusLabel.textColor = .systemGreen
         } else if source == "Default" {
-            timeAndSourceLabel.textColor = .secondaryLabel
+            timeLabel.textColor = .secondaryLabel
+            statusLabel.textColor = .secondaryLabel
         } else {
-            timeAndSourceLabel.textColor = .systemBlue
+            timeLabel.textColor = .systemBlue
+            statusLabel.textColor = .systemBlue
         }
+        // Ensure timeLabel and statusLabel are visible when displaying time
+        timeLabel.isHidden = false
+        statusLabel.isHidden = false
+        // Hide titleLabel when showing estimated time
+        titleLabel.isHidden = true
     }
 
-    private func setRecordingUI() {
-        timeAndSourceLabel.text = "Recording..."
-        timeAndSourceLabel.textColor = .systemOrange
+    private func setInitialUI() {
+        titleLabel.text = stationDisplayName ?? "Station to Platform"
+        titleLabel.isHidden = false
+        timeLabel.isHidden = true
+        statusLabel.isHidden = true
+        elapsedTimeLabel.isHidden = true // Ensure elapsed time is hidden
+    }
+
+    private func updateElapsedTimeLabel() {
+        guard let startTime = startTime else { return }
+        let elapsed = Date().timeIntervalSince(startTime)
+        let formattedTime = formatTime(elapsed)
+        elapsedTimeLabel.text = formattedTime
     }
 
     // MARK: - Actions
@@ -289,6 +352,7 @@ class StationToPlatformCardView: UIView {
             showAlert(title: "No Data", message: "No records available for this station")
             return
         }
+
         let avg = durations.reduce(0, +) / Double(durations.count)
         let minV = durations.min() ?? 0
         let maxV = durations.max() ?? 0
@@ -307,6 +371,7 @@ class StationToPlatformCardView: UIView {
         let s = Int(t) % 60
         return String(format: "%d:%02d", m, s)
     }
+
     private func showAlert(title: String, message: String) {
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let vc = windowScene.windows.first?.rootViewController {
@@ -316,11 +381,8 @@ class StationToPlatformCardView: UIView {
         }
     }
 
-    private func sanitizedStationKey(_ station: String) -> String {
-        let invalidChars = CharacterSet(charactersIn: "/.#$[]")
-        var safe = station
-        safe = safe.components(separatedBy: invalidChars).joined(separator: "-")
-        safe = safe.replacingOccurrences(of: " ", with: "_")
-        return safe
+    // Deinitializer to stop the timer if the view is deallocated
+    deinit {
+        recordingTimer?.invalidate()
     }
 }
