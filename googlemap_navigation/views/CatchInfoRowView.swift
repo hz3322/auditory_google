@@ -91,9 +91,11 @@ class CatchInfoRowView: UIView {
         var statusText = info.catchStatus.displayText
         
         if info.catchStatus != .missed {
-            statusText += " · \(timeLeftRounded)s"
-        } else if timeLeftRounded < 0 {
-            statusText += " (by \(abs(timeLeftRounded))s)"
+            statusText += String(format: " · %ds", timeLeftRounded)
+        } else {
+            if timeLeftRounded < 0 {
+                statusText += " (by \(abs(timeLeftRounded))s)"
+            }
         }
         
         statusLabel.text = statusText
