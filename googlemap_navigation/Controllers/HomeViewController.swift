@@ -370,16 +370,17 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     @objc private func textFieldDidChange(_ textField: UITextField) {
         updateStartTripButtonState()
 
-        if textField == startTextField {
-            if textField.text?.trimmingCharacters(in: .whitespaces).isEmpty ?? true {
-                // 只要被删空，就 show 历史
-                loadRecentSearches()
-                showSearchHistory()
-            } else {
-                hideSearchHistory()
-                // 不要在这里弹 Autocomplete，以免和点击时逻辑冲突
-            }
-        }
+        if textField.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+               showSearchHistory()
+           } else {
+               // 否则，隐藏历史记录并跳转到自动补全页面
+               hideSearchHistory()
+               
+               let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
+               customAutocompleteVC.delegate = self
+               let nav = UINavigationController(rootViewController: customAutocompleteVC)
+               present(nav, animated: true, completion: nil)
+           }
     }
 
     private func setupStartTripButton() {
@@ -1251,19 +1252,21 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
         // 记录当前被点的字段
         activeTextField = textField
+        showSearchHistory()
+        return true
         
-        // 弹出自定义的搜索页
-        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
-        customAutocompleteVC.delegate = self
-        let nav = UINavigationController(rootViewController: customAutocompleteVC)
-        present(nav, animated: true, completion: nil)
-        
-        // 确保当前点击的文本字段保持可交互状态
-        textField.isEnabled = true
-        textField.isUserInteractionEnabled = true
-        
-        // 返回 false 来阻止键盘弹出
-        return false
+//        // 弹出自定义的搜索页
+//        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
+//        customAutocompleteVC.delegate = self
+//        let nav = UINavigationController(rootViewController: customAutocompleteVC)
+//        present(nav, animated: true, completion: nil)
+//        
+//        // 确保当前点击的文本字段保持可交互状态
+//        textField.isEnabled = true
+//        textField.isUserInteractionEnabled = true
+//        
+//        // 返回 false 来阻止键盘弹出
+//        return false
     }
 
     func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) { }
@@ -1356,20 +1359,17 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             self?.searchHistoryTableView.reloadData()
         }
     }
-    
+
     private func showSearchHistory() {
-        isShowingSearchHistory = true
+        loadRecentSearches()
         searchHistoryTableView.isHidden = false
-        searchHistoryTableView.reloadData()
-        
-        // 确保表格视图在最上层
+        // 确保历史记录在最上层
         if let searchCardView = startTextField.superview?.superview {
             searchCardView.bringSubviewToFront(searchHistoryTableView)
         }
     }
     
     private func hideSearchHistory() {
-        isShowingSearchHistory = false
         searchHistoryTableView.isHidden = true
     }
 
@@ -1405,7 +1405,7 @@ extension HomeViewController: UITableViewDelegate, UITableViewDataSource {
     
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        
+        hideSearchHistory()
         if indexPath.row == 0 {
             // Current Location selected
             if let currentLocation = locationManager.location?.coordinate {
@@ -1429,8 +1429,7 @@ extension HomeViewController: UITableViewDelegate, UITableViewDataSource {
             }
         }
         
-        // 一定要隐藏历史列表，交给上层逻辑决定接下来是什么
-        hideSearchHistory()
+
         startTextField.resignFirstResponder()
         updateStartTripButtonState()
     }
