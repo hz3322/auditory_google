@@ -380,13 +380,13 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             return
         }
 
-        let normalizedKey = normalizeStationName(departureStationName)
+        let normalizedKey = StationNameUtils.normalizeStationName(departureStationName)
         var stationData = stationCoordinates[normalizedKey]
 
         // If not found, try fuzzy match
         if stationData == nil {
             // Try to find a key that CONTAINS the normalized name
-            if let fuzzyKey = stationCoordinates.keys.first(where: { normalizeStationName($0) == normalizedKey || $0.lowercased().contains(normalizedKey) }) {
+            if let fuzzyKey = stationCoordinates.keys.first(where: { StationNameUtils.normalizeStationName($0) == normalizedKey || $0.lowercased().contains(normalizedKey) }) {
                 stationData = stationCoordinates[fuzzyKey]
                 print("Fuzzy match for station coordinate: \(fuzzyKey)")
             }
@@ -782,8 +782,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     return
                 }
                 
-                var stopList = stopSequence.map { self.normalizeStationName($0) }
-                let depNorm = self.normalizeStationName(departureStationName)
+                var stopList = stopSequence.map { StationNameUtils.normalizeStationName($0) }
+                let depNorm = StationNameUtils.normalizeStationName(departureStationName)
             
                 guard let targetTfLName = self.bestMatchingStationName(in: stopSequence, for: targetStationName) else {
                     self.addErrorLabel("Target station not found in this route segment.", to: catchSectionView)
@@ -792,7 +792,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     return
                 }
                 
-                let targetNorm = self.normalizeStationName(targetTfLName)
+                let targetNorm = StationNameUtils.normalizeStationName(targetTfLName)
                 print("[RouteSummaryVC] Smart matched target station: \(targetTfLName) [norm: \(targetNorm)]")
                 
                 // 创建 stopSequence 的可变副本
@@ -863,7 +863,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: Array(validLineIds)) { arrivals in
                         let now = Date()
                         let validArrivals = arrivals.filter { prediction in
-                            let destNorm = self.normalizeStationName(prediction.destinationName ?? "")
+                            let destNorm = StationNameUtils.normalizeStationName(prediction.destinationName ?? "")
                             let depIdx = stopList.firstIndex(of: depNorm) ?? 0 // fallback to first
                             guard let targetIdx = stopList.firstIndex(of: targetNorm) else { return false }
                             // destIdx 可以为 nil（终点不在 stopList），这种情况默认算目标之后
@@ -931,10 +931,10 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
   
     private func bestMatchingStationName(in stopList: [String], for rawTargetName: String) -> String? {
-        let normTarget = normalizeStationName(rawTargetName)
+        let normTarget = StationNameUtils.normalizeStationName(rawTargetName)
         
         // First try exact match
-        if let exact = stopList.first(where: { normalizeStationName($0) == normTarget }) {
+        if let exact = stopList.first(where: { StationNameUtils.normalizeStationName($0) == normTarget }) {
             return exact
         }
         
@@ -942,17 +942,17 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         if normTarget.contains("ec") || normTarget.contains("e1") || normTarget.contains("e2") {
             // For EC3N 4AB, try to match with Tower Hill or Monument
             if normTarget.contains("ec3") {
-                if let towerHill = stopList.first(where: { normalizeStationName($0).contains("tower hill") }) {
+                if let towerHill = stopList.first(where: { StationNameUtils.normalizeStationName($0).contains("tower hill") }) {
                     return towerHill
                 }
-                if let monument = stopList.first(where: { normalizeStationName($0).contains("monument") }) {
+                if let monument = stopList.first(where: { StationNameUtils.normalizeStationName($0).contains("monument") }) {
                     return monument
                 }
             }
         }
         
         // Try partial match
-        if let partial = stopList.first(where: { normalizeStationName($0).contains(normTarget) || normTarget.contains(normalizeStationName($0)) }) {
+        if let partial = stopList.first(where: { StationNameUtils.normalizeStationName($0).contains(normTarget) || normTarget.contains(StationNameUtils.normalizeStationName($0)) }) {
             return partial
         }
         
@@ -961,15 +961,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         return stopList.last
     }
 
-    // 你的normalizeStationName方法
-    private func normalizeStationName(_ name: String) -> String {
-        return name
-            .lowercased()
-            .replacingOccurrences(of: " underground station", with: "")
-            .replacingOccurrences(of: " station", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    
     // MARK: - Location Manager Delegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard locations.last != nil else { return }
@@ -1338,4 +1329,5 @@ class PaddingLabel: UILabel {
                       height: size.height + insets.top + insets.bottom)
     }
 }
+
 

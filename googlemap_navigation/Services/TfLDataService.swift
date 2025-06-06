@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 
+
 // MARK: - Constants
 private let baseURL = "https://api.tfl.gov.uk"
 private let apiKey = APIKeys.tflAppKey
@@ -202,7 +203,7 @@ public final class TfLDataService {
             for stop in stops {
                 if let name = stop["commonName"] as? String,
                    let id = stop["naptanId"] as? String {
-                    dict[self.normalizeStationName(name)] = id
+                    dict[StationNameUtils.normalizeStationName(name)] = id
                 }
             }
             self.stationIdMap = dict
@@ -213,7 +214,7 @@ public final class TfLDataService {
     
     // Resolves any (possibly fuzzy) station name to a naptanId, first checking local cache, then using API if needed.
     func resolveStationId(for stationName: String, completion: @escaping (String?) -> Void) {
-        let cleanedName = normalizeStationName(stationName)
+        let cleanedName = StationNameUtils.normalizeStationName(stationName)
         print("[TfLDataService] Resolving station ID for: \(stationName) (cleaned: \(cleanedName))")
         if let id = self.stationIdMap[cleanedName] {
             print("[TfLDataService] Found station ID in cache: \(id)")
@@ -394,14 +395,6 @@ public final class TfLDataService {
         return mapping.first { $0.key.lowercased() == lower }?.value
     }
     
-    /// Normalizes station names for consistent lookup (removes "Underground Station", trims whitespace, lowercases)
-    func normalizeStationName(_ name: String) -> String {
-        return name
-            .lowercased()
-            .replacingOccurrences(of: " underground station", with: "")
-            .replacingOccurrences(of: " station", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 
     func fetchArrivals(forStationId stationId: String, lineId: String? = nil) async throws -> [TfLArrivalPrediction] {
         print("[TfLDataService] Fetching arrivals for station: \(stationId), line: \(lineId ?? "all")")
