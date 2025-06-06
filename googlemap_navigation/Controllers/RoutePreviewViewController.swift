@@ -304,6 +304,7 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
 
         let summaryVC = RouteSummaryViewController()
         summaryVC.totalEstimatedTime = self.bottomEstimatedLabel.attributedText?.string ?? self.bottomEstimatedLabel.text
+        summaryVC.walkToStationTimeMin = self.entryWalkMin 
         summaryVC.walkToStationTime = String(format: "%.0f min", self.entryWalkMin)
         summaryVC.walkToDestinationTime = String(format: "%.0f min", self.exitWalkMin)
         

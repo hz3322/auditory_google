@@ -14,6 +14,10 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private let walkToDestinationCardTag = 3002
     private let catchTrainCardBaseTag = 5000
     
+    
+    //Label
+    private var walkToStationTimeLabel: UILabel?
+    
     // MARK: - Properties
     private let movingDot = UIView()
     private var dotCenterYConstraint: NSLayoutConstraint?
@@ -65,9 +69,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var previousCatchStatus: CatchStatus? = nil // For haptic feedback
     
 
-
-    // Removed unused movingDot, dotCenterYConstraint, timelineMap, stopLabelMap unless re-added for intra-card progress
-    
     private var locationManager = CLLocationManager()
     private var progressService: JourneyProgressService? // This service will provide the dynamic CatchStatus
     private let deltaTimeLabel = UILabel() // Displays dynamic catch status and time
@@ -119,8 +120,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                    target: self,
                    action: #selector(backButtonTapped)
                )
+        print("🕵️ viewDidLoad: walkToStationTimeMin = \(walkToStationTimeMin), walkToStationTimeSec = \(walkToStationTimeSec)")
 
-        
+        self.walkToStationTimeSec = walkToStationTimeMin * 60.0 // for progrss bar Uses Only
         setupProgressBar()
         setupLayout()
         
@@ -138,6 +140,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         locationManager.requestWhenInUseAuthorization()
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         locationManager.distanceFilter  = kCLDistanceFilterNone
+        
+       
+               
         
         // Add initial highlighting for Walk to Station card
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -439,22 +444,43 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         // Debugging: Print the final destination name
         print("[RouteSummaryVC] Final Destination Station Name: \(self.finalDestinationStationName ?? "N/A")")
 
-//        // Convert walking time from minutes to seconds
-//        if let walkStartText = walkToStationTime,
-//               let minutes = walkStartText.components(separatedBy: " ").first,
-//               let md = Double(minutes) {
-//                walkToStationTimeSec = md * 60.0
-//            }
-
         // clean the old views
         stackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
         var viewsToAdd: [UIView] = []
 
-        if let walkStartText = walkToStationTime, !walkStartText.isEmpty {
-            let walkToStationCard = makeCard(title: "🚶 Walk to Station", subtitle: walkStartText)
-            walkToStationCard.tag = walkToStationCardTag
-            viewsToAdd.append(walkToStationCard)
-        }
+        if let departureStationName = transitInfos.first?.departureStation {
+               // 用已知函数算一下目前距离车站的秒数
+               let initialSec = estimatedSecondsToStation(for: departureStationName)
+               let initialMinText = String(format: "%.0f min", initialSec / 60.0)
+
+               // 直接传一个 UILabel 而不是纯字符串
+               let subtitleLabel = UILabel()
+               subtitleLabel.font = .systemFont(ofSize: 15)
+               subtitleLabel.textColor = .secondaryLabel
+               subtitleLabel.text = initialMinText
+               subtitleLabel.numberOfLines = 1
+
+               // 保存引用，以后不断去更新它
+               self.walkToStationTimeLabel = subtitleLabel
+
+               // 把这个 subtitleLabel 和标题一起放进卡片
+               let walkToStationCard = makeCard(customView: {
+                   let titleLabel = UILabel()
+                   titleLabel.text = "🚶 Walk to Station"
+                   titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+                   titleLabel.textColor = .label
+
+                   let stack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+                   stack.axis = .vertical
+                   stack.spacing = 6
+                   stack.translatesAutoresizingMaskIntoConstraints = false
+                   return stack
+               }(), internalPadding: 18)
+
+               walkToStationCard.tag = walkToStationCardTag
+               viewsToAdd.append(walkToStationCard)
+           }
+
         
         for (index, transitLegInfo) in transitInfos.enumerated() {
                     let stationToPlatformCard = StationToPlatformCardView()
@@ -907,7 +933,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                         // 生成 CatchInfo
                         let allCatchInfos = validArrivals.map { prediction -> CatchInfo in
                             let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
-//                            let staticTravelSec = self.walkToStationTimeSec + self.stationToPlatformTimeSec
                             let dynamicTravelSec = self.estimatedSecondsToStation(for: departureStationName) + self.stationToPlatformTimeSec
                             let timeLeftToCatch = secondsUntilTrainArrival - dynamicTravelSec
                             let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
@@ -1209,8 +1234,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
     // MARK: - Location Manager Delegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard locations.last != nil else { return }
+        guard let departureStationName = transitInfos.first?.departureStation else { return }
 
+        // 算出最新的秒数
+        let sec = estimatedSecondsToStation(for: departureStationName)
+        let minText = String(format: "%.0f min", sec / 60.0)
+
+        // 更新到 walkToStationTimeLabel 上
+        DispatchQueue.main.async {
+            self.walkToStationTimeLabel?.text = minText
+        }
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -1284,28 +1317,28 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
          }
      }
 
-    // MARK: - Helper Methods
     private func estimatedSecondsToStation(for stationName: String) -> TimeInterval {
-        // Get the station coordinates
+        // 1. 拿到车站的经纬度
         guard let stationCoord = stationCoordinates[stationName] else {
-            return stationToPlatformTimeSec // Fallback to default platform time
+            // 如果字典里根本没有这个站，就退回一个默认的静态值（比如你之前计算好的 walkToStationTimeSec）
+            return walkToStationTimeSec
         }
         
-        // Get current user location
+        // 2. 拿到“用户当前在何处”的位置，如果没有，就退回静态值
         guard let userLocation = locationManager.location else {
-            return walkToStationTimeSec + stationToPlatformTimeSec // Fallback to total estimated time
+            return walkToStationTimeSec
         }
         
-        // Calculate distance to station
-        let stationLocation = CLLocation(latitude: stationCoord.latitude, longitude: stationCoord.longitude)
-        let distanceToStation = userLocation.distance(from: stationLocation)
+
+        let stationLocation = CLLocation(latitude: stationCoord.latitude,
+                                         longitude: stationCoord.longitude)
+        let distanceToStation = userLocation.distance(from: stationLocation) // 单位：米
         
-        // Assume average walking speed of 1.2 m/s
+
         let assumedWalkingSpeed: Double = 1.2
-        let estimatedWalkTime = distanceToStation / assumedWalkingSpeed
+        let estimatedWalkTime = distanceToStation / assumedWalkingSpeed // 单位：秒
         
-        // Return total estimated time (walking + platform time)
-        return estimatedWalkTime + stationToPlatformTimeSec
+        return estimatedWalkTime
     }
 }
 
