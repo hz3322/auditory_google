@@ -5,6 +5,53 @@ public final class GoogleMapsService {
     static let shared = GoogleMapsService()
     private init() {}
     
+    func fetchTransitDurationAndArrival(
+        from: CLLocationCoordinate2D,
+        to: CLLocationCoordinate2D,
+        completion: @escaping (_ duration: String?, _ arrivalTime: String?, _ departureTime: String?, _ error: Error?) -> Void
+    ) {
+        let urlStr = "https://maps.googleapis.com/maps/api/directions/json?" +
+        "origin=\(from.latitude),\(from.longitude)" +
+        "&destination=\(to.latitude),\(to.longitude)" +
+        "&mode=transit" +
+        "&key=\(APIKeys.googleMaps)"
+        
+        guard let url = URL(string: urlStr) else {
+            completion(nil, nil, nil, NSError(domain: "URL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
+            return
+        }
+        
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error {
+                completion(nil, nil, nil, error)
+                return
+            }
+            guard let data = data else {
+                completion(nil, nil, nil, NSError(domain: "Data", code: -2, userInfo: [NSLocalizedDescriptionKey: "No data"]))
+                return
+            }
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let routes = json["routes"] as? [[String: Any]],
+                   let firstRoute = routes.first,
+                   let legs = firstRoute["legs"] as? [[String: Any]],
+                   let leg = legs.first {
+                    
+                    let durationText = (leg["duration"] as? [String: Any])?["text"] as? String
+                    let arrivalTimeText = (leg["arrival_time"] as? [String: Any])?["text"] as? String
+                    let departureTimeText = (leg["departure_time"] as? [String: Any])?["text"] as? String
+                    completion(durationText, arrivalTimeText, departureTimeText, nil)
+                } else {
+                    completion(nil, nil, nil, NSError(domain: "JSON", code: -3, userInfo: [NSLocalizedDescriptionKey: "Cannot parse directions"]))
+                }
+            } catch {
+                completion(nil, nil, nil, error)
+            }
+        }
+        task.resume()
+    }
+    
+    
     func fetchTransitRoute(
         from: CLLocationCoordinate2D,
         to: CLLocationCoordinate2D,

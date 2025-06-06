@@ -76,11 +76,12 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     // GPS coordinates for the initial walk phase if JourneyProgressService uses them directly
     private var userOriginLocation: CLLocation? // User's actual start (for JourneyProgressService)
 
-    private let sloganLabel: UILabel = {
+    // Replace sloganLabel with summaryLabel
+    private let summaryLabel: UILabel = {
         let label = UILabel()
-        label.text = "Track your journey 👀"
-        label.font = .systemFont(ofSize: 15, weight: .medium)
-        label.textColor = UIColor.systemGray
+        label.text = "--" // Initial placeholder text
+        label.font = .systemFont(ofSize: 19, weight: .semibold)
+        label.textColor = .label
         label.textAlignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -125,6 +126,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         self.walkToStationTimeSec = walkToStationTimeMin * 60.0 // for progrss bar Uses Only
         setupProgressBar()
         setupLayout()
+        
+        // Add the call to fetch and show route summary
+        fetchAndShowRouteSummary()
         
         // —— 关键：先加载坐标，加载完再 populate ——
              loadStationCoordinates { [weak self] in
@@ -212,7 +216,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     
     // MARK: - UI Setup
     private func setupProgressBar() {
-        view.addSubview(sloganLabel)
+        // Use summaryLabel instead of sloganLabel
+        view.addSubview(summaryLabel)
         
         progressBarCard.backgroundColor = .systemBackground
         progressBarCard.layer.cornerRadius = 18
@@ -224,8 +229,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         view.addSubview(progressBarCard)
 
         NSLayoutConstraint.activate([
-            sloganLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            sloganLabel.bottomAnchor.constraint(equalTo: progressBarCard.topAnchor, constant: -12),
+            // Update constraints to use summaryLabel
+            summaryLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            summaryLabel.bottomAnchor.constraint(equalTo: progressBarCard.topAnchor, constant: -12),
             progressBarCard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 45),
             progressBarCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
             progressBarCard.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
@@ -751,6 +757,30 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 
     // MARK: - Data Fetching and Processing
+
+    private func fetchAndShowRouteSummary() {
+        guard let from = routeStartCoordinate, let to = routeDestinationCoordinate else {
+            summaryLabel.text = "--"
+            return
+        }
+        
+        // Call GoogleMapsService to fetch transit duration and arrival time
+        GoogleMapsService.shared.fetchTransitDurationAndArrival(from: from, to: to) { [weak self] duration, arrivalTime, _, error in
+            DispatchQueue.main.async {
+                if let self = self {
+                    if let duration = duration, let arrival = arrivalTime {
+                        self.summaryLabel.text = "\(duration), arrive \(arrival)"
+                    } else if let duration = duration {
+                        self.summaryLabel.text = duration
+                    } else if let arrival = arrivalTime {
+                         self.summaryLabel.text = "Arrive \(arrival)"
+                    } else {
+                        self.summaryLabel.text = "No route info"
+                    }
+                }
+            }
+        }
+    }
 
     private func fetchAndFilterArrivals(
         for transitLegInfo: TransitInfo,
@@ -1324,7 +1354,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             return walkToStationTimeSec
         }
         
-        // 2. 拿到“用户当前在何处”的位置，如果没有，就退回静态值
+        // 2. 拿到"用户当前在何处"的位置，如果没有，就退回静态值
         guard let userLocation = locationManager.location else {
             return walkToStationTimeSec
         }
