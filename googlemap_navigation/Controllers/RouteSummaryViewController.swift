@@ -12,6 +12,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private let walkToStationCardTag = 3000
     private let stationToPlatformCardTag = 3001
     private let walkToDestinationCardTag = 3002
+    private let catchTrainCardBaseTag = 5000
     
     // MARK: - Properties
     private let movingDot = UIView()
@@ -40,6 +41,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     
     var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
     
+
+
+
+
+    
     private static let shortTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
@@ -62,25 +68,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var previousCatchStatus: CatchStatus? = nil // For haptic feedback
     
 
-    let TfLLinesColorMap: [String: String] = [
-        "bakerloo": "#B36305",
-        "central": "#E32017",
-        "circle": "#FFD300",
-        "district": "#00782A",
-        "hammersmith-city": "#F3A9BB",
-        "jubilee": "#A0A5A9",
-        "metropolitan": "#9B0056",
-        "northern": "#000000",
-        "piccadilly": "#003688",
-        "victoria": "#0098D4",
-        "waterloo-city": "#95CDBA",
-        "dlr": "#00AFAD",
-        "london-overground": "#EE7C0E",
-        "tfl-rail": "#0019A8",
-        "elizabeth": "#6950A1",
-        // add any others you use
-    ]
-    
 
     // Removed unused movingDot, dotCenterYConstraint, timelineMap, stopLabelMap unless re-added for intra-card progress
     
@@ -108,8 +95,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private let refreshInterval: TimeInterval = 3.0
     private let missedThreshold: TimeInterval = 100.0 // 100 seconds threshold for missed trains
     
-    // MARK: - Rate Limiting Properties
+    // for the predictaed catch info
+    private var catchInfosDict: [Int: [CatchInfo]] = [:]
+    private var catchInfoRowViewsDict: [Int: [CatchInfoRowView]] = [:]
+    private var catchNaptanIdDict: [Int: String] = [:]
+    private var stopListCache: [Int: [String]] = [:]
+    private var depNormCache: [Int: String] = [:]
+    private var targetNormCache: [Int: String] = [:]
     private var lastLineFetchTime: [String: Date] = [:]
+    
+    // MARK: - Rate Limiting Properties
     private let lineFetchCooldown: TimeInterval = 2.0 // 2 seconds cooldown between requests for the same station
     private var isRefreshing = false
     
@@ -121,13 +116,26 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         self.title = "Journey Summary"
         navigationController?.navigationBar.tintColor = AppColors.accentBlue
         
-        let backButton = UIBarButtonItem(image: UIImage(systemName: "chevron.left"), style: .plain, target: self, action: #selector(backButtonTapped))
-        navigationItem.leftBarButtonItem = backButton
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+                   image: UIImage(systemName: "chevron.left"),
+                   style: .plain,
+                   target: self,
+                   action: #selector(backButtonTapped)
+               )
+
         
         setupProgressBar()
         setupLayout()
-        populateSummary()
-        calculateStationPositionRatio()
+        
+        // —— 关键：先加载坐标，加载完再 populate ——
+             loadStationCoordinates { [weak self] in
+                 guard let self = self else { return }
+                 self.populateSummary()
+                 self.calculateStationPositionRatio()
+                 // 只有当初始的 CatchInfo 都到位后，才启动定时刷新
+                 // 不要在 viewDidLoad 里重复调用
+                 // self.startArrivalsAutoRefresh()
+             }
         
         locationManager.delegate = self
         locationManager.requestWhenInUseAuthorization()
@@ -164,6 +172,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 })
             }
         }
+        
+        // Start periodic refresh of train arrivals
+        startArrivalsAutoRefresh()
     }
     
     @objc private func backButtonTapped() {
@@ -171,8 +182,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         navigationController?.popViewController(animated: true)
     }
 
+
     deinit {
-        progressService?.stop() // Important to stop the service to prevent leaks/crashes
+        arrivalsRefreshTimer?.invalidate()
+        arrivalsRefreshTimer = nil
+        progressService?.stop()
         print("RouteSummaryViewController deinitialized")
     }
     
@@ -427,15 +441,13 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         print("[RouteSummaryVC] Final Destination Station Name: \(self.finalDestinationStationName ?? "N/A")")
 
         // Convert walking time from minutes to seconds
-        if let walkStartText = walkToStationTime, !walkStartText.isEmpty {
-            // Extract minutes from the text (assuming format like "5 min")
-            if let minutes = walkStartText.components(separatedBy: " ").first,
-               let minutesDouble = Double(minutes) {
-                self.walkToStationTimeMin = minutesDouble
-                self.walkToStationTimeSec = minutesDouble * 60.0
+        if let walkStartText = walkToStationTime,
+               let minutes = walkStartText.components(separatedBy: " ").first,
+               let md = Double(minutes) {
+                walkToStationTimeSec = md * 60.0
             }
-        }
 
+        // clean the old views
         stackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
         var viewsToAdd: [UIView] = []
 
@@ -446,18 +458,13 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         }
         
         for (index, transitLegInfo) in transitInfos.enumerated() {
-            let stationToPlatformCard = StationToPlatformCardView()
-            stationToPlatformCard.tag = stationToPlatformCardTag
+                    let stationToPlatformCard = StationToPlatformCardView()
+                    stationToPlatformCard.tag = stationToPlatformCardTag
+                    if let dep = transitLegInfo.departureStation {
+                        stationToPlatformCard.configure(with: dep)
+                    }
+                    viewsToAdd.append(stationToPlatformCard)
 
-            if let depStation = transitLegInfo.departureStation {
-                stationToPlatformCard.configure(with: depStation)
-                if stationCoordinates[depStation] == nil {
-                    print("[RouteSummaryVC] Could not find StationMeta for station: \(depStation)")
-            
-                }
-            }
-
-            viewsToAdd.append(stationToPlatformCard)
 
             let catchSectionView = UIStackView()
             catchSectionView.axis = .vertical
@@ -478,7 +485,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 catchSectionView: catchSectionView,
                 catchTrainCard: catchTrainCard,
                 timeNeededAtStationToReachPlatformSec: self.stationToPlatformTimeSec,
-                catchTitleLabel: catchTitleLabel
+                catchTitleLabel: catchTitleLabel,
+                index: index
             )
             
             // Check for transfer leg and add transfer card if necessary
@@ -723,20 +731,18 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         catchSectionView: UIStackView,
         catchTrainCard: UIView,
         timeNeededAtStationToReachPlatformSec: Double,
-        catchTitleLabel: UILabel
+        catchTitleLabel: UILabel,
+        index: Int
     ) {
         guard let departureStationName = transitLegInfo.departureStation else {
-            self.addErrorLabel("Train line/station info missing.", to: catchSectionView)
-            catchTrainCard.layoutIfNeeded()
+            DispatchQueue.main.async {
+                self.addErrorLabel("Train station missing.", to: catchSectionView)
+                catchTrainCard.layoutIfNeeded()
+            }
             return
         }
-        
-        let lineName = transitLegInfo.lineName
-        let targetStationName = self.finalDestinationStationName ?? transitLegInfo.arrivalStation ?? ""
-        let departureStationCoord = transitLegInfo.departureCoordinate
-        let arrivalStationCoord = transitLegInfo.arrivalCoordinate
 
-        // 1. Resolve Station ID for the departure station.
+        // 1. 先拿到 departureStation 的 naptanId
         TfLDataService.shared.resolveStationId(for: departureStationName) { [weak self] stationNaptanId in
             guard let self = self, let naptanId = stationNaptanId else {
                 DispatchQueue.main.async {
@@ -746,19 +752,18 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 return
             }
 
-            guard let lineId = TfLDataService.shared.tflLineId(from: lineName) else {
-                DispatchQueue.main.async {
-                    self.addErrorLabel("Line ID not found for \(lineName).", to: catchSectionView)
-                    catchTrainCard.layoutIfNeeded()
-                }
-                return
-            }
-            
-            // Use DispatchGroup to wait for stop sequence
+            // 缓存 naptanId
+            self.catchNaptanIdDict[index] = naptanId
+
+            let lineName = transitLegInfo.lineName
+            let targetStationName = self.finalDestinationStationName ?? transitLegInfo.arrivalStation ?? ""
+            let departureStationCoord = transitLegInfo.departureCoordinate
+            let arrivalStationCoord = transitLegInfo.arrivalCoordinate
+
+            // 2. 用 Journey Planner 拿到从 departure 到目标站的停靠站列表
             let fetchGroup = DispatchGroup()
             var stopSequence: [String]? = nil
             
-            // Fetch journey planner stop list from the *current segment's departure* to the *entire route's destination*.
             if let depCoord = departureStationCoord, let routeDestCoord = arrivalStationCoord {
                 print("[RouteSummaryVC] Fetching stop sequence from current segment departure to route destination.")
                 fetchGroup.enter()
@@ -782,8 +787,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     return
                 }
                 
+                // 归一化 stopList
                 var stopList = stopSequence.map { StationNameUtils.normalizeStationName($0) }
                 let depNorm = StationNameUtils.normalizeStationName(departureStationName)
+                
+                
             
                 guard let targetTfLName = self.bestMatchingStationName(in: stopSequence, for: targetStationName) else {
                     self.addErrorLabel("Target station not found in this route segment.", to: catchSectionView)
@@ -795,13 +803,17 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 let targetNorm = StationNameUtils.normalizeStationName(targetTfLName)
                 print("[RouteSummaryVC] Smart matched target station: \(targetTfLName) [norm: \(targetNorm)]")
                 
+                // 缓存 stopList, depNorm, targetNorm
+                self.stopListCache[index] = stopList
+                self.depNormCache[index] = depNorm
+                self.targetNormCache[index] = targetNorm
+                
                 // 创建 stopSequence 的可变副本
                 var mutableStopSequence = stopSequence
                 
                 // handle the problem of tfl journey planner with missing valid drepature station
                 if stopList.first != depNorm {
                     stopList.insert(depNorm, at: 0)
-                    // 同时更新 mutableStopSequence 以保持同步
                     mutableStopSequence.insert(departureStationName, at: 0)
                 }
                 
@@ -817,7 +829,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 let minIdx = max(0, min(depIdx, targetIdx))
                 let maxIdx = min(stopList.count - 1, max(depIdx, targetIdx))
                 
-                // 确保 minIdx 不大于 maxIdx
                 guard minIdx <= maxIdx else {
                     print("[DEBUG] Invalid indices: minIdx = \(minIdx), maxIdx = \(maxIdx), stopList count = \(stopList.count)")
                     self.addErrorLabel("Invalid station sequence.", to: catchSectionView)
@@ -825,11 +836,10 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     return
                 }
                 
-                // 使用更新后的 mutableStopSequence
                 let journeySegmentStops = Array(mutableStopSequence[minIdx...maxIdx])
                 print("[DEBUG] Journey segment stops: \(journeySegmentStops)")
                 
-                // --- 加一个 DispatchGroup 并发拉每一站的 lineId ---
+                // 获取所有相关线路
                 let lineGroup = DispatchGroup()
                 var lineSets: [Set<String>] = []
                 
@@ -859,19 +869,17 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                     let validLineIds = lineSets.reduce(firstSet) { $0.intersection($1) }
                     print("[RouteSummaryVC] Valid lineIds for segment: \(validLineIds)")
                     
-                    // only validLineIds to fetchArrivals
+                    // 获取到站预测
                     TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: Array(validLineIds)) { arrivals in
                         let now = Date()
                         let validArrivals = arrivals.filter { prediction in
                             let destNorm = StationNameUtils.normalizeStationName(prediction.destinationName ?? "")
-                            let depIdx = stopList.firstIndex(of: depNorm) ?? 0 // fallback to first
+                            let depIdx = stopList.firstIndex(of: depNorm) ?? 0
                             guard let targetIdx = stopList.firstIndex(of: targetNorm) else { return false }
-                            // destIdx 可以为 nil（终点不在 stopList），这种情况默认算目标之后
                             let destIdx = stopList.firstIndex(of: destNorm)
                             if let destIdx = destIdx {
                                 return depIdx <= targetIdx && targetIdx <= destIdx
                             } else {
-                                // 终点未知或者更远
                                 return depIdx <= targetIdx
                             }
                         }
@@ -884,17 +892,16 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                             return
                         }
                         
-                        // 生成CatchInfo
-                        let catchInfos = validArrivals.map { prediction -> CatchInfo in
+                        // 生成 CatchInfo
+                        let allCatchInfos = validArrivals.map { prediction -> CatchInfo in
                             let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
                             let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
                             let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
                             return CatchInfo(
-//                                trainId: "\(prediction.lineId ?? "")_\(prediction.expectedArrival.timeIntervalSince1970)",
                                 lineName: prediction.lineName ?? (prediction.lineId ?? ""),
-                                lineColorHex: self.TfLLinesColorMap[prediction.lineId ?? ""] ?? "#007AFF",
-                                fromStation: departureStationName,
-                                toStation: prediction.destinationName ?? "",
+                                lineColorHex:TfLColorUtils.hexString(forLineId: prediction.lineId ?? ""),
+                                fromStation: StationNameUtils.normalizeStationName(departureStationName),
+                                toStation: StationNameUtils.normalizeStationName(prediction.destinationName ?? ""),
                                 stops: [],
                                 expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
                                 expectedArrivalDate: prediction.expectedArrival,
@@ -904,32 +911,210 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                             )
                         }.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
                         
-                        // 更新ProgressService
-                        if let firstTrain = catchInfos.first(where: { $0.catchStatus != .missed }) ?? catchInfos.first {
+                        // 更新 ProgressService
+                        if let firstTrain = allCatchInfos.first(where: { $0.catchStatus != .missed }) ?? allCatchInfos.first {
                             self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
                             self.setupProgressService()
                         } else if transitLegInfo == self.transitInfos.first {
                             self.addErrorLabel("No catchable trains for the first leg.", to: catchSectionView)
                         }
                         
-                        // 展示UI
-                        let arrivalsToDisplay = Array(catchInfos.prefix(5))
-                        for singleCatchInfo in arrivalsToDisplay {
-                            let row = CatchInfoRowView(info: singleCatchInfo)
-                            row.alpha = 0
-                            catchSectionView.addArrangedSubview(row)
-                            UIView.animate(withDuration: 0.35, delay: 0, options: .curveEaseOut, animations: {
-                                row.alpha = 1
-                            })
+                        // 只取前5条做初次展示
+                        let arrivalsToDisplay = Array(allCatchInfos.prefix(5))
+                        
+                        DispatchQueue.main.async {
+                            // 缓存前5条 CatchInfo
+                            self.catchInfosDict[index] = arrivalsToDisplay
+                            
+                            // 创建并缓存 CatchInfoRowView
+                            var rowViews: [CatchInfoRowView] = []
+                            for info in arrivalsToDisplay {
+                                let row = CatchInfoRowView(info: info)
+                                row.onMissed = { [weak self] in
+                                    self?.refreshCatchTrainCards()
+                                }
+                                row.alpha = 0
+                                catchSectionView.addArrangedSubview(row)
+                                rowViews.append(row)
+                                UIView.animate(withDuration: 0.35) {
+                                    row.alpha = 1
+                                }
+                            }
+                            
+                            self.catchInfoRowViewsDict[index] = rowViews
+                            catchTrainCard.layoutIfNeeded()
+                            
+                          
+                            if self.catchInfosDict.count == self.transitInfos.count {
+                                self.startArrivalsAutoRefresh()
+                            }
                         }
-                        catchTrainCard.layoutIfNeeded()
                     }
                 }
             }
         }
     }
 
-  
+    private func startArrivalsAutoRefresh() {
+        arrivalsRefreshTimer?.invalidate()
+        arrivalsRefreshTimer = Timer.scheduledTimer(
+            withTimeInterval: refreshInterval,
+            repeats: true
+        ) { [weak self] _ in
+            self?.refreshCatchTrainCards()
+        }
+    }
+
+    private func refreshCatchTrainCards() {
+        // If already refreshing, skip this update
+        guard !isRefreshing else { return }
+        isRefreshing = true
+
+        let group = DispatchGroup()
+        for (legIndex, _) in catchInfosDict {
+            guard let departureStationName = transitInfos[legIndex].departureStation,
+                  let naptanId = catchNaptanIdDict[legIndex],
+                  let stopList = stopListCache[legIndex],
+                  let depNorm = depNormCache[legIndex],
+                  let targetNorm = targetNormCache[legIndex] else {
+                continue
+            }
+
+            // Check cooldown period
+            if let lastFetch = lastLineFetchTime[naptanId],
+               Date().timeIntervalSince(lastFetch) < lineFetchCooldown {
+                continue
+            }
+
+            // Start network request
+            group.enter()
+            TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: nil) { [weak self] arrivals in
+                guard let self = self else {
+                    group.leave()
+                    return
+                }
+                
+                let now = Date()
+
+                // Filter arrivals that will pass through target station
+                let validArrivals = arrivals.filter { prediction in
+                    let destNorm = StationNameUtils.normalizeStationName(prediction.destinationName ?? "")
+                    guard let depIdx = stopList.firstIndex(of: depNorm),
+                          let targetIdx = stopList.firstIndex(of: targetNorm) else {
+                        return false
+                    }
+                    
+                    if let destIdx = stopList.firstIndex(of: destNorm) {
+                        return depIdx <= targetIdx && targetIdx <= destIdx
+                    } else {
+                        return depIdx <= targetIdx
+                    }
+                }
+
+                if validArrivals.isEmpty {
+                    DispatchQueue.main.async { group.leave() }
+                    return
+                }
+                
+                let newAllCatchInfos = validArrivals.map { prediction -> CatchInfo in
+                    let estimatedTimeToStation = self.estimatedSecondsToStation(for: departureStationName)
+                    let secondsUntilTrain = prediction.expectedArrival.timeIntervalSince(now)
+                    let newTimeLeft = secondsUntilTrain - estimatedTimeToStation
+                    let newStatus = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: newTimeLeft)
+                    return CatchInfo(
+                        lineName: prediction.lineName ?? (prediction.lineId ?? ""),
+                        lineColorHex: TfLColorUtils.hexString(forLineId: prediction.lineId ?? ""),
+                        fromStation: departureStationName,
+                        toStation: prediction.destinationName ?? "",
+                        stops: [],
+                        expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
+                        expectedArrivalDate: prediction.expectedArrival,
+                        timeToStation: estimatedTimeToStation,
+                        timeLeftToCatch: newTimeLeft,
+                        catchStatus: newStatus
+                    )
+                }.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
+
+                let updatedTop5 = Array(newAllCatchInfos.prefix(5))
+                DispatchQueue.main.async {
+                    // Get existing views and data
+                    var oldCatchInfos = self.catchInfosDict[legIndex] ?? []
+                    var oldRowViews = self.catchInfoRowViewsDict[legIndex] ?? []
+
+                    // Remove first row if it's missed
+                    if let firstOld = oldCatchInfos.first,
+                       (firstOld.catchStatus == .missed || firstOld.timeLeftToCatch < -self.missedThreshold) {
+                        oldCatchInfos.removeFirst()
+                        if let toRemove = oldRowViews.first {
+                            UIView.animate(withDuration: 0.25, animations: {
+                                toRemove.alpha = 0
+                            }, completion: { _ in
+                                toRemove.removeFromSuperview()
+                            })
+                            oldRowViews.removeFirst()
+                        }
+                    }
+
+                    // Add new rows if needed
+                    if updatedTop5.count > oldCatchInfos.count {
+                        for i in oldCatchInfos.count..<updatedTop5.count {
+                            let newInfo = updatedTop5[i]
+                            let newRow = CatchInfoRowView(info: newInfo)
+                            newRow.onMissed = { [weak self] in
+                                self?.refreshCatchTrainCards()
+                            }
+                            newRow.alpha = 0
+                            // 先拿到对应的 catchSectionView
+                            if let catchTrainCard = self.stackView.arrangedSubviews
+                                .first(where: { $0.tag == self.catchTrainCardBaseTag + legIndex }),
+                               let catchSectionView = catchTrainCard.subviews
+                                     .compactMap({ $0 as? UIStackView })
+                                     .first {
+                                catchSectionView.addArrangedSubview(newRow)
+                            }
+                            oldRowViews.append(newRow)
+                            UIView.animate(withDuration: 0.25) {
+                                newRow.alpha = 1
+                            }
+                            oldCatchInfos.append(newInfo)
+                        }
+                    }
+
+                    // Update existing rows with new info
+                    let commonCount = min(oldCatchInfos.count, updatedTop5.count)
+                    for i in 0..<commonCount {
+                        let updatedInfo = updatedTop5[i]
+                        oldCatchInfos[i] = updatedInfo
+                        if i < oldRowViews.count {
+                            oldRowViews[i].update(with: updatedInfo)
+                        }
+                    }
+
+                    // Update caches
+                    self.catchInfosDict[legIndex] = oldCatchInfos
+                    self.catchInfoRowViewsDict[legIndex] = oldRowViews
+
+                    // 如果第一班车换了，就更新进度服务
+                    if let firstTrain = oldCatchInfos.first(where: { $0.catchStatus != .missed })
+                        ?? oldCatchInfos.first,
+                       firstTrain.expectedArrivalDate != self.nextTrainArrivalDate {
+                        self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
+                        self.setupProgressService()
+                    }
+
+                    // Record fetch time
+                    self.lastLineFetchTime[naptanId] = Date()
+
+                    group.leave()
+                }
+            }
+        }
+
+        group.notify(queue: .main) {
+            self.isRefreshing = false
+        }
+    }
+
     private func bestMatchingStationName(in stopList: [String], for rawTargetName: String) -> String? {
         let normTarget = StationNameUtils.normalizeStationName(rawTargetName)
         
@@ -964,10 +1149,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     // MARK: - Location Manager Delegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard locations.last != nil else { return }
-        // Pass location to JourneyProgressService. It should handle the logic.
-        // Make sure JourneyProgressService has a method like this:
-        // self.progressService?.updateUserLocation(location)
-        // This method in JourneyProgressService would then recalculate predicted times and CatchStatus.
+
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -1027,13 +1209,42 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 
     private func loadStationCoordinates(completion: @escaping () -> Void) {
-        TfLDataService.shared.loadAllTubeStations { [weak self] stationsDict in
-            // Convert [String: StationMeta] to [String: CLLocationCoordinate2D]
-            self?.stationCoordinates = stationsDict.mapValues { $0.coord }
-            DispatchQueue.main.async {
-                completion()
-            }
+         TfLDataService.shared.loadAllTubeStations { [weak self] stationsDict in
+             guard let self = self else { return }
+             var tmp: [String: CLLocationCoordinate2D] = [:]
+             for (rawName, meta) in stationsDict {
+                 let norm = StationNameUtils.normalizeStationName(rawName)
+                 tmp[norm] = meta.coord
+             }
+             self.stationCoordinates = tmp
+             DispatchQueue.main.async {
+                 completion()
+             }
+         }
+     }
+
+    // MARK: - Helper Methods
+    private func estimatedSecondsToStation(for stationName: String) -> TimeInterval {
+        // Get the station coordinates
+        guard let stationCoord = stationCoordinates[stationName] else {
+            return stationToPlatformTimeSec // Fallback to default platform time
         }
+        
+        // Get current user location
+        guard let userLocation = locationManager.location else {
+            return walkToStationTimeSec + stationToPlatformTimeSec // Fallback to total estimated time
+        }
+        
+        // Calculate distance to station
+        let stationLocation = CLLocation(latitude: stationCoord.latitude, longitude: stationCoord.longitude)
+        let distanceToStation = userLocation.distance(from: stationLocation)
+        
+        // Assume average walking speed of 1.2 m/s
+        let assumedWalkingSpeed: Double = 1.2
+        let estimatedWalkTime = distanceToStation / assumedWalkingSpeed
+        
+        // Return total estimated time (walking + platform time)
+        return estimatedWalkTime + stationToPlatformTimeSec
     }
 }
 
@@ -1297,23 +1508,6 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
     private func stopLocationUpdates() {
         locationManager.stopUpdatingLocation()
         print("Location updates stopped.")
-    }
-}
-
-extension UIColor {
-    convenience init(hex: String) {
-        let hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")
-        var rgb: UInt64 = 0
-        Scanner(string: hexSanitized).scanHexInt64(&rgb)
-        let r = CGFloat((rgb & 0xFF0000) >> 16) / 255.0
-        let g = CGFloat((rgb & 0x00FF00) >> 8) / 255.0
-        let b = CGFloat(rgb & 0x0000FF) / 255.0
-        self.init(red: r, green: g, blue: b, alpha: 1.0)
-    }
-    var isLight: Bool {
-        guard let components = cgColor.components, components.count >= 3 else { return false }
-        let brightness = ((components[0] * 299) + (components[1] * 587) + (components[2] * 114)) / 1000
-        return brightness > 0.5
     }
 }
 
