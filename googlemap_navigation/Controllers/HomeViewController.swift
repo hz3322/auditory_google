@@ -6,7 +6,7 @@ import FirebaseFirestore
 import FirebaseAuth
 
 
-class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate {
+class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate, CustomAutocompleteViewControllerDelegate {
 
     // MARK: - Properties
     private let locationManager = CLLocationManager()
@@ -103,8 +103,6 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
         // Load initial data (frequent places) - this is now asynchronous
         loadFrequentPlacesDataAndSetupInitialUI()
-        
-        setupKeyboardNotifications()
         
         navigationController?.isNavigationBarHidden = true
         
@@ -296,9 +294,6 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             switchButton.heightAnchor.constraint(equalToConstant: 44)
         ])
         
-        // 最后设置搜索历史表格
-        setupSearchHistoryTableView()
-        
         contentStack.setCustomSpacing(16, after: searchCardView)
     }
 
@@ -334,53 +329,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
     }
 
-    private func setupSearchHistoryTableView() {
-        searchHistoryTableView = UITableView()
-        searchHistoryTableView.register(UITableViewCell.self, forCellReuseIdentifier: "SearchHistoryCell")
-        searchHistoryTableView.delegate = self
-        searchHistoryTableView.dataSource = self
-        searchHistoryTableView.isHidden = true
-        searchHistoryTableView.layer.cornerRadius = 12
-        searchHistoryTableView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-        searchHistoryTableView.backgroundColor = .systemBackground
-        searchHistoryTableView.translatesAutoresizingMaskIntoConstraints = false
-        
-        // 确保表格视图可以接收用户交互
-        searchHistoryTableView.isUserInteractionEnabled = true
-        
-        // 把表格添加到 searchCardView 上
-        if let searchCardView = startTextField.superview?.superview {
-            searchCardView.addSubview(searchHistoryTableView)
-            
-            NSLayoutConstraint.activate([
-                searchHistoryTableView.topAnchor.constraint(equalTo: startTextField.bottomAnchor, constant: 4),
-                searchHistoryTableView.leadingAnchor.constraint(equalTo: startTextField.leadingAnchor),
-                searchHistoryTableView.trailingAnchor.constraint(equalTo: startTextField.trailingAnchor),
-                searchHistoryTableView.heightAnchor.constraint(equalToConstant: 200)
-            ])
-            
-            // 确保表格视图在正确的层级
-            searchCardView.bringSubviewToFront(searchHistoryTableView)
-        }
-        
-        // Debug: Print table view frame
-        print("[Debug] searchHistoryTableView frame: \(searchHistoryTableView.frame)")
-    }
-
     @objc private func textFieldDidChange(_ textField: UITextField) {
         updateStartTripButtonState()
-
-        if textField.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
-               showSearchHistory()
-           } else {
-               // 否则，隐藏历史记录并跳转到自动补全页面
-               hideSearchHistory()
-               
-               let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
-               customAutocompleteVC.delegate = self
-               let nav = UINavigationController(rootViewController: customAutocompleteVC)
-               present(nav, animated: true, completion: nil)
-           }
     }
 
     private func setupStartTripButton() {
@@ -1248,209 +1198,22 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
     
     // MARK: - UITextFieldDelegate & GMSAutocompleteViewControllerDelegate
-    // will be called automatically in ios when textfiled.delegate enable
     func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
-        // 记录当前被点的字段
         activeTextField = textField
-        showSearchHistory()
-        return true
         
-//        // 弹出自定义的搜索页
-//        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
-//        customAutocompleteVC.delegate = self
-//        let nav = UINavigationController(rootViewController: customAutocompleteVC)
-//        present(nav, animated: true, completion: nil)
-//        
-//        // 确保当前点击的文本字段保持可交互状态
-//        textField.isEnabled = true
-//        textField.isUserInteractionEnabled = true
-//        
-//        // 返回 false 来阻止键盘弹出
-//        return false
+        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
+        customAutocompleteVC.delegate = self
+        let nav = UINavigationController(rootViewController: customAutocompleteVC)
+        present(nav, animated: true, completion: nil)
+        
+        return false // 返回 false，因为我们是弹出一个新页面来处理输入
     }
 
     func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) { }
     func viewController(_ viewController: GMSAutocompleteViewController, didFailAutocompleteWithError error: Error) { }
     func wasCancelled(_ viewController: GMSAutocompleteViewController) { }
 
-    // MARK: - Keyboard Handling
-    private func setupKeyboardNotifications() {
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
-        
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
-        tapGesture.cancelsTouchesInView = false
-        scrollView.addGestureRecognizer(tapGesture)
-    }
-   
-    @objc private func keyboardWillShow(_ notification: Notification) {
-        guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        let keyboardHeight = keyboardFrame.height
-        
-        var contentInset = scrollView.contentInset
-        contentInset.bottom = keyboardHeight + 20 // Add a little extra padding
-        scrollView.contentInset = contentInset
-        scrollView.scrollIndicatorInsets = contentInset
-    }
-    
-    @objc private func keyboardWillHide(_ notification: Notification) {
-        scrollView.contentInset = .zero
-        scrollView.scrollIndicatorInsets = .zero
-    }
-    
-    @objc private func dismissKeyboard() {
-        view.endEditing(true)
-    }
-
-    // MARK: - Sign Out
-    @objc private func signOutTapped() {
-        let alert = UIAlertController(
-            title: "Sign Out",
-            message: "Are you sure you want to sign out?",
-            preferredStyle: .actionSheet
-        )
-        
-        alert.addAction(UIAlertAction(title: "Sign Out", style: .destructive) { [weak self] _ in
-            self?.performSignOut()
-        })
-        
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        
-        // For iPad support
-        if let popoverController = alert.popoverPresentationController {
-            popoverController.sourceView = view
-            popoverController.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
-            popoverController.permittedArrowDirections = []
-        }
-        
-        present(alert, animated: true)
-    }
-    
-    private func performSignOut() {
-        do {
-            try Auth.auth().signOut()
-            print("✅ User signed out successfully")
-            
-            // Clear any cached data
-            SavedPlacesManager.shared.clearCachedData()
-            
-            // Present login view controller
-            let loginVC = LoginViewController()
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let window = windowScene.windows.first {
-                window.rootViewController = UINavigationController(rootViewController: loginVC)
-                window.makeKeyAndVisible()
-                UIView.transition(with: window,
-                                duration: 0.3,
-                                options: .transitionCrossDissolve,
-                                animations: nil,
-                                completion: nil)
-            }
-        } catch {
-            print("❌ Error signing out: \(error.localizedDescription)")
-            showErrorAlert(message: "Failed to sign out. Please try again.")
-        }
-    }
-
-    // MARK: - Search History Methods
-    private func loadRecentSearches() {
-        SearchHistoryService.shared.fetchRecentSearches { [weak self] searches in
-            self?.recentSearches = searches
-            self?.searchHistoryTableView.reloadData()
-        }
-    }
-
-    private func showSearchHistory() {
-        loadRecentSearches()
-        searchHistoryTableView.isHidden = false
-        // 确保历史记录在最上层
-        if let searchCardView = startTextField.superview?.superview {
-            searchCardView.bringSubviewToFront(searchHistoryTableView)
-        }
-    }
-    
-    private func hideSearchHistory() {
-        searchHistoryTableView.isHidden = true
-    }
-
-    @objc private func didTapStartDebug() {
-        print("🔴 StartTextField was tapped (via debug gesture)")
-    }
-}
-
-// MARK: - UITableViewDelegate & UITableViewDataSource
-extension HomeViewController: UITableViewDelegate, UITableViewDataSource {
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return recentSearches.count + 1 // +1 for "Current Location" option
-    }
-    
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "SearchHistoryCell", for: indexPath)
-        
-        if indexPath.row == 0 {
-            // Current Location option
-            cell.textLabel?.text = "📍 Current Location"
-            cell.imageView?.image = UIImage(systemName: "location.fill")
-        } else {
-            // Search history item
-            let search = recentSearches[indexPath.row - 1]
-            cell.textLabel?.text = search.query
-            cell.imageView?.image = UIImage(systemName: "clock.fill")
-        }
-        
-        cell.textLabel?.font = .systemFont(ofSize: 16)
-        cell.imageView?.tintColor = AppColors.accentBlue
-        return cell
-    }
-    
-    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        hideSearchHistory()
-        if indexPath.row == 0 {
-            // Current Location selected
-            if let currentLocation = locationManager.location?.coordinate {
-                startTextField.text = "Current Location"
-                self.currentLocation = currentLocation
-                mapView.camera = GMSCameraPosition.camera(
-                    withTarget: currentLocation,
-                    zoom: 15
-                )
-            }
-        } else {
-            // Search history item selected
-            let search = recentSearches[indexPath.row - 1]
-            startTextField.text = search.query
-            if let coordinate = search.coordinate?.toCoordinate {
-                self.currentLocation = coordinate
-                mapView.camera = GMSCameraPosition.camera(
-                    withTarget: coordinate,
-                    zoom: 15
-                )
-            }
-        }
-        
-
-        startTextField.resignFirstResponder()
-        updateStartTripButtonState()
-    }
-}
-
-// MARK: - UITextField Padding Extension
-extension UITextField {
-    func setLeftPaddingPoints(_ amount:CGFloat){
-        let paddingView = UIView(frame: CGRect(x: 0, y: 0, width: amount, height: self.frame.height))
-        self.leftView = paddingView
-        self.leftViewMode = .always
-    }
-    func setRightPaddingPoints(_ amount:CGFloat) {
-        let paddingView = UIView(frame: CGRect(x: 0, y: 0, width: amount, height: self.frame.height))
-        self.rightView = paddingView
-        self.rightViewMode = .always
-    }
-}
-
-// MARK: - CustomAutocompleteViewControllerDelegate
-extension HomeViewController: CustomAutocompleteViewControllerDelegate {
+    // MARK: - CustomAutocompleteViewControllerDelegate
     func customAutocompleteViewController(_ controller: CustomAutocompleteViewController, didSelectPlace place: GMSPlace) {
         let placeAddress = place.formattedAddress ?? place.name ?? "Selected Location"
         let placeCoordinate = place.coordinate
@@ -1536,5 +1299,69 @@ extension HomeViewController: CustomAutocompleteViewControllerDelegate {
                 }
             }
         }
+    }
+
+    // MARK: - Sign Out
+    @objc private func signOutTapped() {
+        let alert = UIAlertController(
+            title: "Sign Out",
+            message: "Are you sure you want to sign out?",
+            preferredStyle: .actionSheet
+        )
+        
+        alert.addAction(UIAlertAction(title: "Sign Out", style: .destructive) { [weak self] _ in
+            self?.performSignOut()
+        })
+        
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        
+        // For iPad support
+        if let popoverController = alert.popoverPresentationController {
+            popoverController.sourceView = view
+            popoverController.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
+            popoverController.permittedArrowDirections = []
+        }
+        
+        present(alert, animated: true)
+    }
+    
+    private func performSignOut() {
+        do {
+            try Auth.auth().signOut()
+            print("✅ User signed out successfully")
+            
+            // Clear any cached data
+            SavedPlacesManager.shared.clearCachedData()
+            
+            // Present login view controller
+            let loginVC = LoginViewController()
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = windowScene.windows.first {
+                window.rootViewController = UINavigationController(rootViewController: loginVC)
+                window.makeKeyAndVisible()
+                UIView.transition(with: window,
+                                duration: 0.3,
+                                options: .transitionCrossDissolve,
+                                animations: nil,
+                                completion: nil)
+            }
+        } catch {
+            print("❌ Error signing out: \(error.localizedDescription)")
+            showErrorAlert(message: "Failed to sign out. Please try again.")
+        }
+    }
+}
+
+// MARK: - UITextField Padding Extension
+extension UITextField {
+    func setLeftPaddingPoints(_ amount:CGFloat){
+        let paddingView = UIView(frame: CGRect(x: 0, y: 0, width: amount, height: self.frame.height))
+        self.leftView = paddingView
+        self.leftViewMode = .always
+    }
+    func setRightPaddingPoints(_ amount:CGFloat) {
+        let paddingView = UIView(frame: CGRect(x: 0, y: 0, width: amount, height: self.frame.height))
+        self.rightView = paddingView
+        self.rightViewMode = .always
     }
 }

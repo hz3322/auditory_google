@@ -7,6 +7,7 @@ class SearchHistoryService {
     static let shared = SearchHistoryService()
     private let db = Firestore.firestore()
     private let maxHistoryItems = 15
+    private let historyKey = "searchHistoryKey"
     
     private init() {}
     
@@ -14,6 +15,7 @@ class SearchHistoryService {
         guard let userId = Auth.auth().currentUser?.uid else { return }
         
         let geoPoint = coordinate.map { SearchHistory.GeoPoint(coordinate: $0) }
+        let newId = UUID().uuidString
         let searchHistory = SearchHistory(
             id: UUID().uuidString,
             query: query,
@@ -22,21 +24,38 @@ class SearchHistoryService {
         )
         
         let data: [String: Any] = [
-            "id": searchHistory.id,
+            "id": newId,
             "query": searchHistory.query,
             "timestamp": searchHistory.timestamp,
             "latitude": geoPoint?.latitude as Any,
             "longitude": geoPoint?.longitude as Any
         ]
         
-        db.collection("users").document(userId)
-            .collection("searchHistory")
-            .document(searchHistory.id)
-            .setData(data) { error in
-                if let error = error {
-                    print("Error saving search history: \(error.localizedDescription)")
-                }
-            }
+        let userHistoryRef = db.collection("users").document(userId).collection("searchHistory")
+        
+        
+        // 先查有没有相同的 query（去重）
+           userHistoryRef.whereField("query", isEqualTo: query).getDocuments { snapshot, error in
+               if let error = error {
+                   print("Error checking duplicate search history: \(error.localizedDescription)")
+                   // 还是继续存
+                   userHistoryRef.document(newId).setData(data)
+                   return
+               }
+               
+               // 删除所有重复项（如果有）
+               let batch = self.db.batch()
+               snapshot?.documents.forEach { doc in
+                   batch.deleteDocument(doc.reference)
+               }
+               // 插入新纪录
+               batch.setData(data, forDocument: userHistoryRef.document(newId))
+               batch.commit { error in
+                   if let error = error {
+                       print("Error saving search history (with dedup): \(error.localizedDescription)")
+                   }
+               }
+           }
     }
     
     func fetchRecentSearches(completion: @escaping ([SearchHistory]) -> Void) {

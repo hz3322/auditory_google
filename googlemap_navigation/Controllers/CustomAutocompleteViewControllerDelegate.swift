@@ -18,11 +18,13 @@ class CustomAutocompleteViewController: UIViewController {
     private var predictions: [GMSAutocompletePrediction] = []
     private let locationManager: CLLocationManager
     private var currentLocation: CLLocationCoordinate2D?
+    private var recentSearches: [SearchHistory] = []
+    weak var delegate: CustomAutocompleteViewControllerDelegate?
     
     // Add property to track which text field is active
     var isForStartLocation: Bool = true
-    
-    weak var delegate: CustomAutocompleteViewControllerDelegate?
+    private var isShowingHistory = true
+
     
     // MARK: - Initialization
     init(isForStartLocation: Bool = true) {
@@ -53,170 +55,191 @@ class CustomAutocompleteViewController: UIViewController {
         super.viewDidLoad()
         setupUI()
         setupLocationManager()
+        loadRecentSearches()
     }
     
-    // MARK: - Setup
-    private func setupUI() {
-        view.backgroundColor = .systemBackground
-        
-        // Setup search bar
-        searchBar.delegate = self
-        searchBar.placeholder = isForStartLocation ? "Search for starting location" : "Search for destination"
-        searchBar.searchBarStyle = .minimal
-        searchBar.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(searchBar)
-        
-        // Setup table view
-        tableView.delegate = self
-        tableView.dataSource = self
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(tableView)
-        
-        // Setup constraints
-        NSLayoutConstraint.activate([
-            searchBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            searchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            searchBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+    // MARK: - Setup UI
+        private func setupUI() {
+            view.backgroundColor = .systemBackground
+            // Navigation
+            navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(cancelTapped))
+            title = isForStartLocation ? "Starting Location" : "Destination"
+
+            // SearchBar
+            searchBar.delegate = self
+            searchBar.placeholder = isForStartLocation ? "Search for starting location" : "Search for destination"
+            searchBar.searchBarStyle = .minimal
+            searchBar.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(searchBar)
             
-            tableView.topAnchor.constraint(equalTo: searchBar.bottomAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        
-        // Add cancel button
-        navigationItem.leftBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .cancel,
-            target: self,
-            action: #selector(cancelTapped)
-        )
-        
-        // Set title based on which field we're editing
-        title = isForStartLocation ? "Starting Location" : "Destination"
-    }
-    
-    private func setupLocationManager() {
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        
-        // Request location authorization if needed
-        if locationManager.authorizationStatus == .notDetermined {
-            locationManager.requestWhenInUseAuthorization()
-        } else if locationManager.authorizationStatus == .authorizedWhenInUse ||
-                  locationManager.authorizationStatus == .authorizedAlways {
-            locationManager.requestLocation()
-        }
-    }
-    
-    // MARK: - Actions
-    @objc private func cancelTapped() {
-        delegate?.customAutocompleteViewControllerDidCancel(self)
-    }
-}
-
-// MARK: - UISearchBarDelegate
-extension CustomAutocompleteViewController: UISearchBarDelegate {
-    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
-        autocompleteFetcher.sourceTextHasChanged(searchText)
-    }
-    
-    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
-        searchBar.resignFirstResponder()
-    }
-}
-
-// MARK: - UITableViewDelegate & UITableViewDataSource
-extension CustomAutocompleteViewController: UITableViewDelegate, UITableViewDataSource {
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return predictions.count + 1 // +1 for current location
-    }
-    
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
-        
-        if indexPath.row == 0 {
-            // Current Location cell
-            cell.textLabel?.text = "📍 Current Location"
-            cell.imageView?.image = UIImage(systemName: "location.fill")
-            cell.imageView?.tintColor = .systemBlue
-        } else {
-            // Google Places prediction cell
-            let prediction = predictions[indexPath.row - 1]
-            cell.textLabel?.text = prediction.attributedFullText.string
-            cell.imageView?.image = UIImage(systemName: "mappin.circle.fill")
-            cell.imageView?.tintColor = .systemGray
+            // TableView
+            tableView.delegate = self
+            tableView.dataSource = self
+            tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
+            tableView.tableFooterView = UIView()
+            tableView.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(tableView)
+            
+            // Layout
+            NSLayoutConstraint.activate([
+                searchBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                searchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                searchBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                
+                tableView.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 0),
+                tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            ])
         }
         
-        return cell
-    }
-    
-    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        
-        if indexPath.row == 0 {
-            // Current Location selected
-            if let location = currentLocation {
-                delegate?.customAutocompleteViewController(self, didSelectCurrentLocation: location)
-            } else {
-                // Request location if not available
+        private func setupLocationManager() {
+            locationManager.delegate = self
+            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            if locationManager.authorizationStatus == .notDetermined {
+                locationManager.requestWhenInUseAuthorization()
+            } else if locationManager.authorizationStatus == .authorizedWhenInUse ||
+                      locationManager.authorizationStatus == .authorizedAlways {
                 locationManager.requestLocation()
             }
-        } else {
-            // Google Places prediction selected
-            let prediction = predictions[indexPath.row - 1]
-            let placeClient = GMSPlacesClient.shared()
+        }
+
+        // MARK: - Data
+        private func loadRecentSearches() {
+            // ⚡️根据你自己的实现替换
+            SearchHistoryService.shared.fetchRecentSearches { [weak self] searches in
+                self?.recentSearches = searches
+                self?.isShowingHistory = true
+                DispatchQueue.main.async { self?.tableView.reloadData() }
+            }
+        }
+        
+        // MARK: - Actions
+        @objc private func cancelTapped() {
+            delegate?.customAutocompleteViewControllerDidCancel(self)
+        }
+    }
+
+    // MARK: - UISearchBarDelegate
+    extension CustomAutocompleteViewController: UISearchBarDelegate {
+        func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+            if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // Show history when search bar is empty
+                isShowingHistory = true
+                tableView.reloadData()
+            } else {
+                isShowingHistory = false
+                autocompleteFetcher.sourceTextHasChanged(searchText)
+            }
+        }
+        func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+            searchBar.resignFirstResponder()
+        }
+    }
+
+    // MARK: - UITableViewDataSource & UITableViewDelegate
+    extension CustomAutocompleteViewController: UITableViewDataSource, UITableViewDelegate {
+        func numberOfSections(in tableView: UITableView) -> Int {
+            return 1
+        }
+        func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+            if isShowingHistory {
+                // 1 for Current Location, rest for history
+                return 1 + recentSearches.count
+            } else {
+                return predictions.count
+            }
+        }
+        func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+            let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
+            cell.textLabel?.font = .systemFont(ofSize: 16)
+            cell.imageView?.tintColor = .systemBlue
             
-            // Create a session token for this request
-            let sessionToken = GMSAutocompleteSessionToken()
-            
-            // Define the fields we want to fetch
-            let placeFields: GMSPlaceField = [.name, .formattedAddress, .coordinate]
-            
-            placeClient.fetchPlace(fromPlaceID: prediction.placeID,
-                                 placeFields: placeFields,
-                                 sessionToken: sessionToken) { [weak self] place, error in
-                guard let self = self, let place = place else {
-                    print("Error fetching place: \(error?.localizedDescription ?? "Unknown error")")
-                    return
+            if isShowingHistory {
+                if indexPath.row == 0 {
+                    cell.textLabel?.text = "📍 Current Location"
+                    cell.imageView?.image = UIImage(systemName: "location.fill")
+                } else {
+                    let history = recentSearches[indexPath.row - 1]
+                    cell.textLabel?.text = history.query
+                    cell.imageView?.image = UIImage(systemName: "clock")
                 }
-                
-                DispatchQueue.main.async {
-                    self.delegate?.customAutocompleteViewController(self, didSelectPlace: place)
+            } else {
+                let prediction = predictions[indexPath.row]
+                cell.textLabel?.text = prediction.attributedFullText.string
+                cell.imageView?.image = UIImage(systemName: "mappin.circle.fill")
+                cell.imageView?.tintColor = .systemGray
+            }
+            return cell
+        }
+        func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+            tableView.deselectRow(at: indexPath, animated: true)
+            if isShowingHistory {
+                if indexPath.row == 0 {
+                    // 当前定位
+                    if let location = currentLocation {
+                        delegate?.customAutocompleteViewController(self, didSelectCurrentLocation: location)
+                    } else {
+                        locationManager.requestLocation()
+                    }
+                } else {
+                    let history = recentSearches[indexPath.row - 1]
+                    // 你也可以在这里直接 geocode 地址再回调，或直接传 query 让主页面去处理
+                    // 推荐做法：直接模拟Google search回调（如果有地理坐标直接new一个GMSPlace）
+                    // 这里只给demo：回调 query
+                    let query = history.query
+                    let client = GMSPlacesClient.shared()
+                    let token = GMSAutocompleteSessionToken()
+                    client.findAutocompletePredictions(fromQuery: query, filter: nil, sessionToken: token) { [weak self] preds, error in
+                        if let pred = preds?.first {
+                            client.fetchPlace(fromPlaceID: pred.placeID, placeFields: [.name, .formattedAddress, .coordinate], sessionToken: token) { place, error in
+                                if let place = place {
+                                    self?.delegate?.customAutocompleteViewController(self!, didSelectPlace: place)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let prediction = predictions[indexPath.row]
+                let client = GMSPlacesClient.shared()
+                let token = GMSAutocompleteSessionToken()
+                client.fetchPlace(fromPlaceID: prediction.placeID, placeFields: [.name, .formattedAddress, .coordinate], sessionToken: token) { [weak self] place, error in
+                    if let place = place {
+                        self?.delegate?.customAutocompleteViewController(self!, didSelectPlace: place)
+                    }
                 }
             }
         }
     }
-}
 
-// MARK: - GMSAutocompleteFetcherDelegate
-extension CustomAutocompleteViewController: GMSAutocompleteFetcherDelegate {
-    func didAutocomplete(with predictions: [GMSAutocompletePrediction]) {
-        self.predictions = predictions
-        tableView.reloadData()
-    }
-    
-    func didFailAutocompleteWithError(_ error: Error) {
-        print("Autocomplete error: \(error.localizedDescription)")
-    }
-}
-
-// MARK: - CLLocationManagerDelegate
-extension CustomAutocompleteViewController: CLLocationManagerDelegate {
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        if let location = locations.first {
-            currentLocation = location.coordinate
+    // MARK: - GMSAutocompleteFetcherDelegate
+    extension CustomAutocompleteViewController: GMSAutocompleteFetcherDelegate {
+        func didAutocomplete(with predictions: [GMSAutocompletePrediction]) {
+            self.predictions = predictions
+            DispatchQueue.main.async { [weak self] in
+                self?.tableView.reloadData()
+            }
+        }
+        func didFailAutocompleteWithError(_ error: Error) {
+            print("Autocomplete error: \(error.localizedDescription)")
         }
     }
-    
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("Location error: \(error.localizedDescription)")
-    }
-    
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        if manager.authorizationStatus == .authorizedWhenInUse ||
-           manager.authorizationStatus == .authorizedAlways {
-            manager.requestLocation()
+
+    // MARK: - CLLocationManagerDelegate
+    extension CustomAutocompleteViewController: CLLocationManagerDelegate {
+        func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+            if let location = locations.first {
+                currentLocation = location.coordinate
+            }
+        }
+        func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+            print("Location error: \(error.localizedDescription)")
+        }
+        func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+            if manager.authorizationStatus == .authorizedWhenInUse ||
+               manager.authorizationStatus == .authorizedAlways {
+                manager.requestLocation()
+            }
         }
     }
-} 
