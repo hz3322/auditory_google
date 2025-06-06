@@ -252,6 +252,20 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         startTextField = makeStyledTextField(placeholder: "From (Current Location)")
         destinationTextField = makeStyledTextField(placeholder: "To (Enter Destination)")
         
+        // 创建切换按钮
+        let switchButton = UIButton(type: .system)
+        if #available(iOS 13.0, *) {
+            let config = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+            let switchImage = UIImage(systemName: "arrow.up.arrow.down.circle.fill", withConfiguration: config)
+            switchButton.setImage(switchImage, for: .normal)
+        } else {
+            switchButton.setTitle("⇅", for: .normal)
+            switchButton.titleLabel?.font = .systemFont(ofSize: 20, weight: .medium)
+        }
+        switchButton.tintColor = AppColors.accentBlue
+        switchButton.addTarget(self, action: #selector(switchLocationsTapped), for: .touchUpInside)
+        switchButton.translatesAutoresizingMaskIntoConstraints = false
+        
         // 先设置 delegate
         startTextField.delegate = self
         destinationTextField.delegate = self
@@ -268,20 +282,56 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         
         // 添加到视图层级
         searchCardView.addSubview(searchFieldsStack)
+        searchCardView.addSubview(switchButton)
+        
         NSLayoutConstraint.activate([
             searchFieldsStack.topAnchor.constraint(equalTo: searchCardView.topAnchor, constant: 16),
             searchFieldsStack.leadingAnchor.constraint(equalTo: searchCardView.leadingAnchor, constant: 16),
             searchFieldsStack.trailingAnchor.constraint(equalTo: searchCardView.trailingAnchor, constant: -16),
-            searchFieldsStack.bottomAnchor.constraint(equalTo: searchCardView.bottomAnchor, constant: -16)
+            searchFieldsStack.bottomAnchor.constraint(equalTo: searchCardView.bottomAnchor, constant: -16),
+            
+            switchButton.centerXAnchor.constraint(equalTo: searchCardView.centerXAnchor),
+            switchButton.centerYAnchor.constraint(equalTo: searchCardView.centerYAnchor),
+            switchButton.widthAnchor.constraint(equalToConstant: 44),
+            switchButton.heightAnchor.constraint(equalToConstant: 44)
         ])
         
         // 最后设置搜索历史表格
         setupSearchHistoryTableView()
         
         contentStack.setCustomSpacing(16, after: searchCardView)
+    }
+
+    @objc private func switchLocationsTapped() {
+        // 交换文本
+        let tempText = startTextField.text
+        startTextField.text = destinationTextField.text
+        destinationTextField.text = tempText
         
-        // Debug: 打印最终状态
-        print("[Debug] setupSearchCard completed - startTextField.delegate = \(String(describing: startTextField.delegate))")
+        // 如果起始位置是"Current Location"，需要特殊处理
+        if startTextField.text == "Current Location" {
+            if let currentLocation = locationManager.location?.coordinate {
+                self.currentLocation = currentLocation
+            }
+        } else if destinationTextField.text == "Current Location" {
+            if let currentLocation = locationManager.location?.coordinate {
+                self.currentLocation = currentLocation
+            }
+        }
+        
+        // 更新按钮状态
+        updateStartTripButtonState()
+        
+        // 添加动画效果
+        UIView.animate(withDuration: 0.3, animations: {
+            self.startTextField.transform = CGAffineTransform(translationX: 0, y: 12)
+            self.destinationTextField.transform = CGAffineTransform(translationX: 0, y: -12)
+        }) { _ in
+            UIView.animate(withDuration: 0.3) {
+                self.startTextField.transform = .identity
+                self.destinationTextField.transform = .identity
+            }
+        }
     }
 
     private func setupSearchHistoryTableView() {
