@@ -77,6 +77,12 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         case editFrequent = 103     // When editing an existing custom frequent place
     }
 
+    // Add new properties for search history
+    private var searchHistoryTableView: UITableView!
+    private var recentSearches: [SearchHistory] = []
+    private var isShowingSearchHistory = false
+    private var activeTextField: UITextField?
+
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -94,7 +100,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         setupStartTripButton()
         setupFrequentPlacesSection()
         setupNearAttractionsSection()
-        
+
         // Load initial data (frequent places) - this is now asynchronous
         loadFrequentPlacesDataAndSetupInitialUI()
         
@@ -104,6 +110,15 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         
         // Set isUILayoutComplete to true after all UI setup is done
         isUILayoutComplete = true
+        
+        // 确保在所有 UI 设置完成后重新设置 delegate
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            print("[Debug] Re-setting delegates in viewDidLoad")
+            self.startTextField.delegate = self
+            self.destinationTextField.delegate = self
+            print("[Debug] After re-setting - startTextField.delegate = \(String(describing: self.startTextField.delegate))")
+        }
         
         // Start location updates if authorized
         if locationManager.authorizationStatus == .authorizedWhenInUse || 
@@ -233,20 +248,25 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         let searchCardView = createCardView()
         contentStack.addArrangedSubview(searchCardView)
         
+        // 创建文本框
         startTextField = makeStyledTextField(placeholder: "From (Current Location)")
         destinationTextField = makeStyledTextField(placeholder: "To (Enter Destination)")
+        
+        // 先设置 delegate
         startTextField.delegate = self
         destinationTextField.delegate = self
-        // Add target for text change to update button state
+        
+        // 再添加其他设置
         startTextField.addTarget(self, action: #selector(textFieldDidChange), for: .editingChanged)
         destinationTextField.addTarget(self, action: #selector(textFieldDidChange), for: .editingChanged)
-
-
+        
+        // 创建并设置 stack view
         let searchFieldsStack = UIStackView(arrangedSubviews: [startTextField, destinationTextField])
         searchFieldsStack.axis = .vertical
         searchFieldsStack.spacing = 12
         searchFieldsStack.translatesAutoresizingMaskIntoConstraints = false
         
+        // 添加到视图层级
         searchCardView.addSubview(searchFieldsStack)
         NSLayoutConstraint.activate([
             searchFieldsStack.topAnchor.constraint(equalTo: searchCardView.topAnchor, constant: 16),
@@ -254,11 +274,62 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             searchFieldsStack.trailingAnchor.constraint(equalTo: searchCardView.trailingAnchor, constant: -16),
             searchFieldsStack.bottomAnchor.constraint(equalTo: searchCardView.bottomAnchor, constant: -16)
         ])
+        
+        // 最后设置搜索历史表格
+        setupSearchHistoryTableView()
+        
         contentStack.setCustomSpacing(16, after: searchCardView)
+        
+        // Debug: 打印最终状态
+        print("[Debug] setupSearchCard completed - startTextField.delegate = \(String(describing: startTextField.delegate))")
+    }
+
+    private func setupSearchHistoryTableView() {
+        searchHistoryTableView = UITableView()
+        searchHistoryTableView.register(UITableViewCell.self, forCellReuseIdentifier: "SearchHistoryCell")
+        searchHistoryTableView.delegate = self
+        searchHistoryTableView.dataSource = self
+        searchHistoryTableView.isHidden = true
+        searchHistoryTableView.layer.cornerRadius = 12
+        searchHistoryTableView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        searchHistoryTableView.backgroundColor = .systemBackground
+        searchHistoryTableView.translatesAutoresizingMaskIntoConstraints = false
+        
+        // 确保表格视图可以接收用户交互
+        searchHistoryTableView.isUserInteractionEnabled = true
+        
+        // 把表格添加到 searchCardView 上
+        if let searchCardView = startTextField.superview?.superview {
+            searchCardView.addSubview(searchHistoryTableView)
+            
+            NSLayoutConstraint.activate([
+                searchHistoryTableView.topAnchor.constraint(equalTo: startTextField.bottomAnchor, constant: 4),
+                searchHistoryTableView.leadingAnchor.constraint(equalTo: startTextField.leadingAnchor),
+                searchHistoryTableView.trailingAnchor.constraint(equalTo: startTextField.trailingAnchor),
+                searchHistoryTableView.heightAnchor.constraint(equalToConstant: 200)
+            ])
+            
+            // 确保表格视图在正确的层级
+            searchCardView.bringSubviewToFront(searchHistoryTableView)
+        }
+        
+        // Debug: Print table view frame
+        print("[Debug] searchHistoryTableView frame: \(searchHistoryTableView.frame)")
     }
 
     @objc private func textFieldDidChange(_ textField: UITextField) {
         updateStartTripButtonState()
+
+        if textField == startTextField {
+            if textField.text?.trimmingCharacters(in: .whitespaces).isEmpty ?? true {
+                // 只要被删空，就 show 历史
+                loadRecentSearches()
+                showSearchHistory()
+            } else {
+                hideSearchHistory()
+                // 不要在这里弹 Autocomplete，以免和点击时逻辑冲突
+            }
+        }
     }
 
     private func setupStartTripButton() {
@@ -378,6 +449,24 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         tf.setRightPaddingPoints(16)
         tf.translatesAutoresizingMaskIntoConstraints = false
         tf.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        
+        // Disable QuickType bar and other iOS input suggestions
+        tf.textContentType = .none
+        tf.autocorrectionType = .no
+        tf.spellCheckingType = .no
+        tf.smartDashesType = .no
+        tf.smartQuotesType = .no
+        tf.smartInsertDeleteType = .no
+        tf.autocapitalizationType = .none
+        if #available(iOS 11.0, *) {
+            tf.inputAssistantItem.leadingBarButtonGroups = []
+            tf.inputAssistantItem.trailingBarButtonGroups = []
+        }
+        
+        // Ensure text field is interactive
+        tf.isUserInteractionEnabled = true
+        tf.isEnabled = true
+        
         return tf
     }
     
@@ -489,7 +578,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         let addButtonCard = UIView() // Simple container, no card styling for the button itself
         addButtonCard.backgroundColor = .clear
         addButtonCard.addSubview(addFrequentPlaceButton)
-        addFrequentPlaceButton.translatesAutoresizingMaskIntoConstraints = false
+        addButtonCard.translatesAutoresizingMaskIntoConstraints = false
         
         NSLayoutConstraint.activate([
             addFrequentPlaceButton.centerXAnchor.constraint(equalTo: addButtonCard.centerXAnchor),
@@ -607,56 +696,37 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
     // Helper function to handle the tap logic
     private func handleFrequentPlaceTap(_ tappedPlace: SavedPlace) {
-        // Check if it's a placeholder by its specific address string
         if tappedPlace.address.starts(with: "Tap to set") {
-            self.currentlySettingPlaceName = tappedPlace.name // Store "Home" or "Work"
-            
-            let autocompleteController = GMSAutocompleteViewController()
-            autocompleteController.delegate = self
-            // Use specific tags for setting Home/Work based on the name of the placeholder
-            autocompleteController.view.tag = (tappedPlace.name == "Home") ? GMSAutocompleteTag.setHome.rawValue : GMSAutocompleteTag.setWork.rawValue
-            
-            let filter = GMSAutocompleteFilter()
-            filter.countries = ["GB"]
-            autocompleteController.autocompleteFilter = filter
-            present(autocompleteController, animated: true, completion: nil)
+            self.currentlySettingPlaceName = tappedPlace.name
+            let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: true)
+            customAutocompleteVC.delegate = self
+            let nav = UINavigationController(rootViewController: customAutocompleteVC)
+            present(nav, animated: true)
         } else {
-            // A configured place was tapped
-            destinationTextField.text = tappedPlace.address // Use the stored address
-            print("ℹ️ Frequent place '\(tappedPlace.name)' selected. Address: \(tappedPlace.address)")
+            destinationTextField.text = tappedPlace.address
             updateStartTripButtonState()
         }
     }
     
     @objc private func addNewFrequentPlaceTapped() {
         self.currentlySettingPlaceName = nil
-        let autocompleteController = GMSAutocompleteViewController()
-        autocompleteController.delegate = self
-        autocompleteController.view.tag = GMSAutocompleteTag.addFrequent.rawValue // Tag for adding new
-        
-        let filter = GMSAutocompleteFilter()
-        filter.countries = ["GB"]
-        autocompleteController.autocompleteFilter = filter
-        present(autocompleteController, animated: true, completion: nil)
+        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: true)
+        customAutocompleteVC.delegate = self
+        let nav = UINavigationController(rootViewController: customAutocompleteVC)
+        present(nav, animated: true)
     }
 
     @objc private func editFrequentPlaceTapped(_ sender: UIButton) {
         guard let placeIDString = sender.accessibilityIdentifier,
               let placeID = UUID(uuidString: placeIDString),
               let placeToEdit = frequentPlaces.first(where: { $0.id == placeID }) else {
-            print("🛑 Could not identify place to edit")
             return
         }
-        
         currentlyEditingFrequentPlace = placeToEdit
-        let autocompleteController = GMSAutocompleteViewController()
-        autocompleteController.delegate = self
-        autocompleteController.view.tag = GMSAutocompleteTag.editFrequent.rawValue
-        
-        let filter = GMSAutocompleteFilter()
-        filter.countries = ["GB"]
-        autocompleteController.autocompleteFilter = filter
-        present(autocompleteController, animated: true)
+        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: true)
+        customAutocompleteVC.delegate = self
+        let nav = UINavigationController(rootViewController: customAutocompleteVC)
+        present(nav, animated: true)
     }
 
     @objc private func handleSwipeGesture(_ gesture: UISwipeGestureRecognizer) {
@@ -777,13 +847,6 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         // Update current location immediately
         currentLocation = newCoordinate
         
-        // Update start text field if needed
-        if let startTF = self.startTextField {
-            if startTF.text?.isEmpty ?? true || startTF.text?.lowercased() == "current location" {
-                startTF.text = "Current Location"
-            }
-        }
-
         // Only proceed with map updates if UI is ready
         guard isUILayoutComplete else {
             print("⚠️ locationManager didUpdateLocations: UI layout not yet complete. Buffering location.")
@@ -1134,146 +1197,28 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
     
     // MARK: - UITextFieldDelegate & GMSAutocompleteViewControllerDelegate
+    // will be called automatically in ios when textfiled.delegate enable
     func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
-        let autocompleteController = GMSAutocompleteViewController()
-        autocompleteController.delegate = self
-        autocompleteController.modalPresentationStyle = .fullScreen
+        // 记录当前被点的字段
+        activeTextField = textField
         
-        // Style Autocomplete
-        autocompleteController.primaryTextColor = AppColors.primaryText
-        autocompleteController.secondaryTextColor = AppColors.secondaryText
-        autocompleteController.tableCellBackgroundColor = AppColors.cardBackground
-        autocompleteController.tableCellSeparatorColor = AppColors.subtleGray
-        autocompleteController.tintColor = AppColors.accentBlue
+        // 弹出自定义的搜索页
+        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
+        customAutocompleteVC.delegate = self
+        let nav = UINavigationController(rootViewController: customAutocompleteVC)
+        present(nav, animated: true, completion: nil)
         
-        let filter = GMSAutocompleteFilter()
-        filter.countries = ["GB"] // United Kingdom
-        autocompleteController.autocompleteFilter = filter
-
-        if textField == startTextField {
-            autocompleteController.view.tag = GMSAutocompleteTag.startField.rawValue
-        } else if textField == destinationTextField {
-            autocompleteController.view.tag = GMSAutocompleteTag.destinationField.rawValue
-        }
-        present(autocompleteController, animated: true)
+        // 确保当前点击的文本字段保持可交互状态
+        textField.isEnabled = true
+        textField.isUserInteractionEnabled = true
+        
+        // 返回 false 来阻止键盘弹出
         return false
     }
 
-    func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) {
-        let tagRawValue = viewController.view.tag
-        guard let tagValue = GMSAutocompleteTag(rawValue: tagRawValue) else {
-            print("🛑 Unknown autocomplete tag raw value: \(tagRawValue)")
-            dismiss(animated: true, completion: nil)
-            return
-        }
-        
-        let placeAddress = place.formattedAddress ?? place.name ?? "Selected Location"
-        let placeCoordinate = place.coordinate
-
-        dismiss(animated: true) { [weak self] in
-            guard let self = self else { return }
-            
-            switch tagValue {
-            case .startField:
-                self.startTextField.text = placeAddress
-                self.currentLocation = placeCoordinate
-            case .destinationField:
-                self.destinationTextField.text = placeAddress
-            case .setHome:
-                let homeID = self.frequentPlaces.first(where: { $0.name == "Home" })?.id ?? UUID()
-                let homePlace = SavedPlace(id: homeID,
-                                           name: "Home",
-                                           address: placeAddress,
-                                           coordinate: placeCoordinate)
-                self.saveFrequentPlaceAndUpdateUI(homePlace)
-            case .setWork:
-                let workID = self.frequentPlaces.first(where: { $0.name == "Work" })?.id ?? UUID()
-                let workPlace = SavedPlace(id: workID,
-                                           name: "Work",
-                                           address: placeAddress,
-                                           coordinate: placeCoordinate)
-                self.saveFrequentPlaceAndUpdateUI(workPlace)
-            case .addFrequent:
-                self.promptForFrequentPlaceCustomName(selectedPlace: place)
-            case .editFrequent:
-                if let placeToEdit = self.currentlyEditingFrequentPlace {
-                    let updatedPlace = SavedPlace(
-                        id: placeToEdit.id,
-                        name: placeToEdit.name,
-                        address: placeAddress,
-                        coordinate: placeCoordinate
-                    )
-                    self.saveFrequentPlaceAndUpdateUI(updatedPlace)
-                }
-            }
-            self.updateStartTripButtonState()
-        }
-    }
-    
-    private func saveFrequentPlaceAndUpdateUI(_ place: SavedPlace) {
-        SavedPlacesManager.shared.addOrUpdatePlace(place) { [weak self] error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                if let error = error {
-                    print("🛑 Error saving frequent place '\(place.name)' to Firestore: \(error.localizedDescription)")
-                    self.showErrorAlert(message: "Could not save \"\(place.name)\". Please try again.")
-                    } else {
-                    print("✅ Frequent place '\(place.name)' saved to Firestore.")
-                    self.refreshFrequentPlacesUI() // Refresh UI to show the new/updated place
-                }
-            }
-        }
-    }
-    
-    private func promptForFrequentPlaceCustomName(selectedPlace: GMSPlace) {
-        let alertController = UIAlertController(title: "Save Frequent Place",
-                                                message: "Enter a name for this location:",
-                                                preferredStyle: .alert)
-        
-        alertController.addTextField { textField in
-            textField.placeholder = "e.g., Gym, Parents' House"
-            textField.text = selectedPlace.name // Pre-fill with the place's name
-        }
-        
-        let saveAction = UIAlertAction(title: "Save", style: .default) { [weak self, weak alertController] _ in
-            guard let self = self,
-                  let nameField = alertController?.textFields?.first,
-                  let customName = nameField.text?.trimmingCharacters(in: .whitespacesAndNewlines), !customName.isEmpty else {
-                // Optionally, show an alert if the name is empty
-                return
-            }
-            
-            // Prevent saving "Home" or "Work" as custom names again if they are handled as system defaults
-            if ["home", "work"].contains(customName.lowercased()) {
-                 self.showErrorAlert(title: "Name Reserved", message: "\"Home\" and \"Work\" are special. Please choose a different name or set them by tapping their cards.")
-                return
-            }
-            
-            // Check for duplicate names among *custom* frequent places
-            if self.frequentPlaces.contains(where: { $0.name.lowercased() == customName.lowercased() }) {
-                self.showErrorAlert(title: "Name Exists", message: "A frequent place with this name already exists. Please choose a different name.")
-                return
-            }
-
-            let newFrequentPlace = SavedPlace(name: customName,
-                                              address: selectedPlace.formattedAddress ?? selectedPlace.name ?? "Unknown Address",
-                                              coordinate: selectedPlace.coordinate) // Custom places are not system defaults
-            self.saveFrequentPlaceAndUpdateUI(newFrequentPlace)
-        }
-        
-        alertController.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alertController.addAction(saveAction)
-        present(alertController, animated: true)
-    }
-
-    func viewController(_ viewController: GMSAutocompleteViewController, didFailAutocompleteWithError error: Error) {
-        print("❌ Autocomplete error: \(error.localizedDescription)")
-        dismiss(animated: true, completion: nil)
-    }
-
-    func wasCancelled(_ viewController: GMSAutocompleteViewController) {
-        dismiss(animated: true, completion: nil)
-    }
+    func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) { }
+    func viewController(_ viewController: GMSAutocompleteViewController, didFailAutocompleteWithError error: Error) { }
+    func wasCancelled(_ viewController: GMSAutocompleteViewController) { }
 
     // MARK: - Keyboard Handling
     private func setupKeyboardNotifications() {
@@ -1353,6 +1298,92 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             showErrorAlert(message: "Failed to sign out. Please try again.")
         }
     }
+
+    // MARK: - Search History Methods
+    private func loadRecentSearches() {
+        SearchHistoryService.shared.fetchRecentSearches { [weak self] searches in
+            self?.recentSearches = searches
+            self?.searchHistoryTableView.reloadData()
+        }
+    }
+    
+    private func showSearchHistory() {
+        isShowingSearchHistory = true
+        searchHistoryTableView.isHidden = false
+        searchHistoryTableView.reloadData()
+        
+        // 确保表格视图在最上层
+        if let searchCardView = startTextField.superview?.superview {
+            searchCardView.bringSubviewToFront(searchHistoryTableView)
+        }
+    }
+    
+    private func hideSearchHistory() {
+        isShowingSearchHistory = false
+        searchHistoryTableView.isHidden = true
+    }
+
+    @objc private func didTapStartDebug() {
+        print("🔴 StartTextField was tapped (via debug gesture)")
+    }
+}
+
+// MARK: - UITableViewDelegate & UITableViewDataSource
+extension HomeViewController: UITableViewDelegate, UITableViewDataSource {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return recentSearches.count + 1 // +1 for "Current Location" option
+    }
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "SearchHistoryCell", for: indexPath)
+        
+        if indexPath.row == 0 {
+            // Current Location option
+            cell.textLabel?.text = "📍 Current Location"
+            cell.imageView?.image = UIImage(systemName: "location.fill")
+        } else {
+            // Search history item
+            let search = recentSearches[indexPath.row - 1]
+            cell.textLabel?.text = search.query
+            cell.imageView?.image = UIImage(systemName: "clock.fill")
+        }
+        
+        cell.textLabel?.font = .systemFont(ofSize: 16)
+        cell.imageView?.tintColor = AppColors.accentBlue
+        return cell
+    }
+    
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        
+        if indexPath.row == 0 {
+            // Current Location selected
+            if let currentLocation = locationManager.location?.coordinate {
+                startTextField.text = "Current Location"
+                self.currentLocation = currentLocation
+                mapView.camera = GMSCameraPosition.camera(
+                    withTarget: currentLocation,
+                    zoom: 15
+                )
+            }
+        } else {
+            // Search history item selected
+            let search = recentSearches[indexPath.row - 1]
+            startTextField.text = search.query
+            if let coordinate = search.coordinate?.toCoordinate {
+                self.currentLocation = coordinate
+                mapView.camera = GMSCameraPosition.camera(
+                    withTarget: coordinate,
+                    zoom: 15
+                )
+            }
+        }
+        
+        // 一定要隐藏历史列表，交给上层逻辑决定接下来是什么
+        hideSearchHistory()
+        startTextField.resignFirstResponder()
+        updateStartTripButtonState()
+    }
 }
 
 // MARK: - UITextField Padding Extension
@@ -1366,5 +1397,95 @@ extension UITextField {
         let paddingView = UIView(frame: CGRect(x: 0, y: 0, width: amount, height: self.frame.height))
         self.rightView = paddingView
         self.rightViewMode = .always
+    }
+}
+
+// MARK: - CustomAutocompleteViewControllerDelegate
+extension HomeViewController: CustomAutocompleteViewControllerDelegate {
+    func customAutocompleteViewController(_ controller: CustomAutocompleteViewController, didSelectPlace place: GMSPlace) {
+        let placeAddress = place.formattedAddress ?? place.name ?? "Selected Location"
+        let placeCoordinate = place.coordinate
+        
+        SearchHistoryService.shared.saveSearch(query: placeAddress, coordinate: placeCoordinate)
+        
+        controller.dismiss(animated: true) { [weak self] in
+            guard let self = self else { return }
+            
+            if let settingPlaceName = self.currentlySettingPlaceName {
+                // Handle setting Home/Work
+                let placeID = self.frequentPlaces.first(where: { $0.name == settingPlaceName })?.id ?? UUID()
+                let savedPlace = SavedPlace(id: placeID,
+                                          name: settingPlaceName,
+                                          address: placeAddress,
+                                          coordinate: placeCoordinate)
+                self.saveFrequentPlaceAndUpdateUI(savedPlace)
+            } else if let editingPlace = self.currentlyEditingFrequentPlace {
+                // Handle editing existing place
+                let updatedPlace = SavedPlace(id: editingPlace.id,
+                                            name: editingPlace.name,
+                                            address: placeAddress,
+                                            coordinate: placeCoordinate)
+                self.saveFrequentPlaceAndUpdateUI(updatedPlace)
+            } else if self.activeTextField === self.startTextField {
+                // Handle start location
+                self.startTextField.text = placeAddress
+                self.currentLocation = placeCoordinate
+                // 确保文本字段保持可交互状态
+                self.startTextField.isEnabled = true
+                self.startTextField.isUserInteractionEnabled = true
+            } else if self.activeTextField === self.destinationTextField {
+                // Handle destination
+                self.destinationTextField.text = placeAddress
+                // 确保文本字段保持可交互状态
+                self.destinationTextField.isEnabled = true
+                self.destinationTextField.isUserInteractionEnabled = true
+            }
+            
+            self.updateStartTripButtonState()
+        }
+    }
+    
+    func customAutocompleteViewController(_ controller: CustomAutocompleteViewController, didSelectCurrentLocation location: CLLocationCoordinate2D) {
+        controller.dismiss(animated: true) { [weak self] in
+            guard let self = self else { return }
+            
+            if self.activeTextField === self.startTextField {
+                self.startTextField.text = "Current Location"
+                self.currentLocation = location
+                self.mapView.camera = GMSCameraPosition.camera(withTarget: location, zoom: 15)
+                // 确保文本字段保持可交互状态
+                self.startTextField.isEnabled = true
+                self.startTextField.isUserInteractionEnabled = true
+            }
+            
+            self.updateStartTripButtonState()
+        }
+    }
+    
+    func customAutocompleteViewControllerDidCancel(_ controller: CustomAutocompleteViewController) {
+        controller.dismiss(animated: true)
+        // 确保文本字段保持可交互状态
+        if activeTextField === startTextField {
+            startTextField.isEnabled = true
+            startTextField.isUserInteractionEnabled = true
+        } else if activeTextField === destinationTextField {
+            destinationTextField.isEnabled = true
+            destinationTextField.isUserInteractionEnabled = true
+        }
+    }
+    
+    private func saveFrequentPlaceAndUpdateUI(_ place: SavedPlace) {
+        SavedPlacesManager.shared.addOrUpdatePlace(place) { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let error = error {
+                    print("🛑 Error saving frequent place '\(place.name)' to Firestore: \(error.localizedDescription)")
+                    self.showErrorAlert(message: "Could not save \"\(place.name)\". Please try again.")
+                } else {
+                    print("✅ Frequent place '\(place.name)' saved to Firestore.")
+                    self.refreshFrequentPlacesUI()
+                }
+            }
+        }
     }
 }
