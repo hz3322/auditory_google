@@ -10,23 +10,16 @@ class CatchInfoRowView: UIView {
     private let iconLabel = UILabel()
     
     private var info: CatchInfo
-    private var refreshTimer: Timer?
-    private let refreshInterval: TimeInterval = 5.0
     
     // MARK: - Initialization
     init(info: CatchInfo) {
         self.info = info
         super.init(frame: .zero)
         setupUI()
-        startRefreshTimer()
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-    
-    deinit {
-        stopRefreshTimer()
     }
     
     // MARK: - UI Setup
@@ -81,98 +74,48 @@ class CatchInfoRowView: UIView {
         updateUI(with: info)
     }
     
-    // MARK: - Timer Management
-    private func startRefreshTimer() {
-        stopRefreshTimer()
-        refreshTimer = Timer.scheduledTimer(timeInterval: refreshInterval,
-                                            target: self,
-                                            selector: #selector(updateTimerFired),
-                                            userInfo: nil,
-                                            repeats: true)
-    }
-    
-    private func stopRefreshTimer() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-    }
-    
-    @objc private func updateTimerFired() {
-        let now = Date()
-        let newTimeLeft = info.expectedArrivalDate.timeIntervalSince(now) - info.timeToStation
-        let newStatus = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: newTimeLeft)
-        
-        let updatedInfo = CatchInfo(
-            lineName: info.lineName,
-            lineColorHex: info.lineColorHex,
-            fromStation: info.fromStation,
-            toStation: info.toStation,
-            stops: info.stops,
-            expectedArrival: info.expectedArrival,
-            expectedArrivalDate: info.expectedArrivalDate,
-            timeToStation: info.timeToStation,
-            timeLeftToCatch: newTimeLeft,
-            catchStatus: newStatus
-        )
-        
-        // 刷新UI
-        update(with: updatedInfo)
-        
-        // Stop timer if train is definitely missed
-        if newStatus == .missed && newTimeLeft < -300 {
-            stopRefreshTimer()
-        }
-    }
-    
     // MARK: - UI Updates
     public func update(with info: CatchInfo) {
-           self.info = info
-           updateUI(with: info)
-        if info.catchStatus == .missed{
+        self.info = info
+        updateUI(with: info)
+        
+        if info.catchStatus == .missed {
             onMissed?()
         }
-       }
-       
+    }
     
     private func updateUI(with info: CatchInfo) {
-            arrivalTimeLabel.text = info.expectedArrival
-            
-            let timeLeftRounded = Int(round(info.timeLeftToCatch))
-            var statusText = info.catchStatus.displayText
-            
-            if info.catchStatus != .missed {
-                statusText += " · \(abs(timeLeftRounded))s"
-            } else if timeLeftRounded < 0 {
-                statusText += " (by \(abs(timeLeftRounded))s)"
-            }
-            
-            statusLabel.text = statusText
-            statusLabel.textColor = info.catchStatus.displayColor
-            
-            // Update icon
-            if let iconName = info.catchStatus.systemIconName,
-               let iconImage = UIImage(systemName: iconName) {
-                let attachment = NSTextAttachment()
-                let tintedImage = iconImage.withTintColor(info.catchStatus.displayColor, renderingMode: .alwaysOriginal)
-                attachment.image = tintedImage
-                let imageSize = iconLabel.font.pointSize
-                attachment.bounds = CGRect(x: 0, y: -2, width: imageSize, height: imageSize)
-                iconLabel.attributedText = NSAttributedString(attachment: attachment)
-            }
-            
-            // Update background
-            UIView.animate(withDuration: 0.3) {
-                self.backgroundColor = info.catchStatus.displayColor.withAlphaComponent(0.08)
-            }
+        arrivalTimeLabel.text = info.expectedArrival
+        
+        let timeLeftRounded = Int(round(info.timeLeftToCatch))
+        var statusText = info.catchStatus.displayText
+        
+        if info.catchStatus != .missed {
+            statusText += " · \(abs(timeLeftRounded))s"
+        } else if timeLeftRounded < 0 {
+            statusText += " (by \(abs(timeLeftRounded))s)"
         }
-
-    
-    // MARK: - Lifecycle
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if window != nil {
-            startRefreshTimer()
-        } else {
-            stopRefreshTimer()
+        
+        statusLabel.text = statusText
+        statusLabel.textColor = info.catchStatus.displayColor
+        
+        // Update icon
+        if let iconName = info.catchStatus.systemIconName,
+           let iconImage = UIImage(systemName: iconName) {
+            let attachment = NSTextAttachment()
+            let tintedImage = iconImage.withTintColor(info.catchStatus.displayColor, renderingMode: .alwaysOriginal)
+            attachment.image = tintedImage
+            let imageSize = iconLabel.font.pointSize
+            attachment.bounds = CGRect(x: 0, y: -2, width: imageSize, height: imageSize)
+            iconLabel.attributedText = NSAttributedString(attachment: attachment)
+        }
+        
+        // Background color
+        UIView.animate(withDuration: 0.3) {
+            self.backgroundColor = info
+                .catchStatus
+                .displayColor
+                .withAlphaComponent(0.08)
         }
     }
 }

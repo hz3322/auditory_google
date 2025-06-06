@@ -42,9 +42,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     var stationCoordinates: [String: CLLocationCoordinate2D] = [:]
     
 
-
-
-
     
     private static let shortTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -477,6 +474,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             catchSectionView.addArrangedSubview(catchTitleLabel)
             
             let catchTrainCard = makeCard(customView: catchSectionView, internalPadding: 12)
+            catchTrainCard.tag = catchTrainCardBaseTag + index
             viewsToAdd.append(catchTrainCard)
             
             // Call the new helper method to fetch, filter, and display arrivals
@@ -895,19 +893,20 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                         // 生成 CatchInfo
                         let allCatchInfos = validArrivals.map { prediction -> CatchInfo in
                             let secondsUntilTrainArrival = prediction.expectedArrival.timeIntervalSince(now)
-                            let timeLeftToCatch = secondsUntilTrainArrival - timeNeededAtStationToReachPlatformSec
+                            let staticTravelSec = self.walkToStationTimeSec + self.stationToPlatformTimeSec
+                            let timeLeftToCatch = secondsUntilTrainArrival - staticTravelSec
                             let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeftToCatch)
                             return CatchInfo(
-                                lineName: prediction.lineName ?? (prediction.lineId ?? ""),
-                                lineColorHex:TfLColorUtils.hexString(forLineId: prediction.lineId ?? ""),
-                                fromStation: StationNameUtils.normalizeStationName(departureStationName),
-                                toStation: StationNameUtils.normalizeStationName(prediction.destinationName ?? ""),
-                                stops: [],
-                                expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
+                                lineName:            prediction.lineName ?? (prediction.lineId ?? ""),
+                                lineColorHex:        TfLColorUtils.hexString(forLineId: prediction.lineId ?? ""),
+                                fromStation:         StationNameUtils.normalizeStationName(departureStationName),
+                                toStation:           StationNameUtils.normalizeStationName(prediction.destinationName ?? ""),
+                                stops:               [],
+                                expectedArrival:     RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
                                 expectedArrivalDate: prediction.expectedArrival,
-                                timeToStation: prediction.timeToStation,
-                                timeLeftToCatch: timeLeftToCatch,
-                                catchStatus: status
+                                timeToStation:       staticTravelSec,
+                                timeLeftToCatch:     timeLeftToCatch,
+                                catchStatus:         status
                             )
                         }.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
                         
@@ -956,161 +955,188 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 
     private func startArrivalsAutoRefresh() {
+        // Invalidate existing timer if any
         arrivalsRefreshTimer?.invalidate()
-        arrivalsRefreshTimer = Timer.scheduledTimer(
-            withTimeInterval: refreshInterval,
-            repeats: true
-        ) { [weak self] _ in
+        
+        // Create a new timer that fires every refreshInterval seconds
+        arrivalsRefreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
             self?.refreshCatchTrainCards()
         }
     }
 
     private func refreshCatchTrainCards() {
-        // If already refreshing, skip this update
+        // 如果已经在刷新，就直接 return
         guard !isRefreshing else { return }
         isRefreshing = true
 
-        let group = DispatchGroup()
+        let now = Date()
+        let dispatchGroup = DispatchGroup()
+
+        // 遍历每个 legIndex，分别刷新这一段上的所有 CatchInfoRowView
         for (legIndex, _) in catchInfosDict {
-            guard let departureStationName = transitInfos[legIndex].departureStation,
-                  let naptanId = catchNaptanIdDict[legIndex],
-                  let stopList = stopListCache[legIndex],
-                  let depNorm = depNormCache[legIndex],
-                  let targetNorm = targetNormCache[legIndex] else {
+            // 拿到当前 leg 的旧模型和旧视图队列
+            guard var oldInfos = catchInfosDict[legIndex],
+                  var oldViews = catchInfoRowViewsDict[legIndex],
+                  let departureStationName = transitInfos[legIndex].departureStation,
+                  let naptanId = catchNaptanIdDict[legIndex]
+            else {
                 continue
             }
 
-            // Check cooldown period
-            if let lastFetch = lastLineFetchTime[naptanId],
-               Date().timeIntervalSince(lastFetch) < lineFetchCooldown {
+            // —— 第一步：先"动态刷新"这一段现有的所有行，让它们每 3s 看起来都在倒计时/状态变化。 —— 
+            for i in 0..<oldInfos.count {
+                var info = oldInfos[i]
+                // 重新计算 timeLeft = 预测到站时间 - (现在 + walkToStation + stationToPlatform)
+                let staticTravelSec = walkToStationTimeSec + stationToPlatformTimeSec
+                let timeLeft = info.expectedArrivalDate.timeIntervalSince(now) - staticTravelSec
+                let newStatus = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: timeLeft)
+
+                // 更新模型里的 timeLeft 和 catchStatus
+                info.timeLeftToCatch = timeLeft
+                info.catchStatus = newStatus
+                oldInfos[i] = info
+
+                // 用新的模型 push 给对应的 rowView，让它自行刷新 label
+                let rowView = oldViews[i]
+                let updatedInfo = CatchInfo(
+                    lineName:            info.lineName,
+                    lineColorHex:        info.lineColorHex,
+                    fromStation:         info.fromStation,
+                    toStation:           info.toStation,
+                    stops:               info.stops,
+                    expectedArrival:     RouteSummaryViewController.shortTimeFormatter.string(from: info.expectedArrivalDate),
+                    expectedArrivalDate: info.expectedArrivalDate,
+                    timeToStation:       staticTravelSec,
+                    timeLeftToCatch:     timeLeft,
+                    catchStatus:         newStatus
+                )
+                rowView.update(with: updatedInfo)
+            }
+            // 把更新后的模型数组写回缓存
+            catchInfosDict[legIndex] = oldInfos
+
+            // —— 第二步：从队头检查"真正 missed 的"条目——
+            var removeCount = 0
+            while removeCount < oldInfos.count {
+                let info = oldInfos[removeCount]
+                if info.catchStatus == .missed {
+                    removeCount += 1
+                } else {
+                    break
+                }
+            }
+
+            // 如果这一段没有任何连续 missed，就跳过删除／补新逻辑
+            if removeCount == 0 {
                 continue
             }
 
-            // Start network request
-            group.enter()
+            // —— 第三步：删除这一段队头连续的 removeCount 条 —— 
+            for _ in 0..<removeCount {
+                let viewToRemove = oldViews.removeFirst()
+                UIView.animate(withDuration: 0.25, animations: {
+                    viewToRemove.alpha = 0
+                }, completion: { _ in
+                    viewToRemove.removeFromSuperview()
+                })
+                oldInfos.removeFirst()
+            }
+
+            // —— 第四步：拉一次新的预测，补齐缺口 —— 
+            dispatchGroup.enter()
             TfLDataService.shared.fetchAllArrivals(for: naptanId, relevantLineIds: nil) { [weak self] arrivals in
                 guard let self = self else {
-                    group.leave()
+                    dispatchGroup.leave()
                     return
                 }
-                
-                let now = Date()
+                let nowInner = Date()
 
-                // Filter arrivals that will pass through target station
+                // 4.1 先过滤＋排序和最初一样
+                let stopList = self.stopListCache[legIndex]!
+                let depNorm = self.depNormCache[legIndex]!
+                let targetNorm = self.targetNormCache[legIndex]!
+
                 let validArrivals = arrivals.filter { prediction in
                     let destNorm = StationNameUtils.normalizeStationName(prediction.destinationName ?? "")
                     guard let depIdx = stopList.firstIndex(of: depNorm),
-                          let targetIdx = stopList.firstIndex(of: targetNorm) else {
-                        return false
-                    }
-                    
+                          let targetIdx = stopList.firstIndex(of: targetNorm)
+                    else { return false }
                     if let destIdx = stopList.firstIndex(of: destNorm) {
                         return depIdx <= targetIdx && targetIdx <= destIdx
                     } else {
                         return depIdx <= targetIdx
                     }
                 }
+                .map { prediction -> CatchInfo in
+                    let secondsUntilTrain = prediction.expectedArrival.timeIntervalSince(nowInner)
 
-                if validArrivals.isEmpty {
-                    DispatchQueue.main.async { group.leave() }
-                    return
-                }
-                
-                let newAllCatchInfos = validArrivals.map { prediction -> CatchInfo in
-                    let estimatedTimeToStation = self.estimatedSecondsToStation(for: departureStationName)
-                    let secondsUntilTrain = prediction.expectedArrival.timeIntervalSince(now)
-                    let newTimeLeft = secondsUntilTrain - estimatedTimeToStation
-                    let newStatus = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: newTimeLeft)
+                    // 这里同样用静态的 walkToStationTimeSec + stationToPlatformTimeSec
+                    let staticTravelSec = self.walkToStationTimeSec + self.stationToPlatformTimeSec
+                    let left = secondsUntilTrain - staticTravelSec
+                    let status = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: left)
+
                     return CatchInfo(
-                        lineName: prediction.lineName ?? (prediction.lineId ?? ""),
-                        lineColorHex: TfLColorUtils.hexString(forLineId: prediction.lineId ?? ""),
-                        fromStation: departureStationName,
-                        toStation: prediction.destinationName ?? "",
-                        stops: [],
-                        expectedArrival: RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
+                        lineName:            prediction.lineName ?? (prediction.lineId ?? ""),
+                        lineColorHex:        TfLColorUtils.hexString(forLineId: prediction.lineId ?? ""),
+                        fromStation:         StationNameUtils.normalizeStationName(departureStationName),
+                        toStation:           StationNameUtils.normalizeStationName(prediction.destinationName ?? ""),
+                        stops:               [],
+                        expectedArrival:     RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
                         expectedArrivalDate: prediction.expectedArrival,
-                        timeToStation: estimatedTimeToStation,
-                        timeLeftToCatch: newTimeLeft,
-                        catchStatus: newStatus
+                        timeToStation:       staticTravelSec,
+                        timeLeftToCatch:     left,
+                        catchStatus:         status
                     )
-                }.sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
+                }
+                .sorted { $0.expectedArrivalDate < $1.expectedArrivalDate }
 
-                let updatedTop5 = Array(newAllCatchInfos.prefix(5))
+                // 4.2 只取前 5 条
+                let newTop5 = Array(validArrivals.prefix(5))
+
                 DispatchQueue.main.async {
-                    // Get existing views and data
-                    var oldCatchInfos = self.catchInfosDict[legIndex] ?? []
-                    var oldRowViews = self.catchInfoRowViewsDict[legIndex] ?? []
+                    // 4.3 计算当前剩余行数（oldInfos.count 已经 = 5 - removeCount），补 returnCount = removeCount 条
+                    let currentCount = oldInfos.count  // 应当是 5 - removeCount
+                    let needToInsert = min(removeCount, max(0, newTop5.count - currentCount))
 
-                    // Remove first row if it's missed
-                    if let firstOld = oldCatchInfos.first,
-                       (firstOld.catchStatus == .missed || firstOld.timeLeftToCatch < -self.missedThreshold) {
-                        oldCatchInfos.removeFirst()
-                        if let toRemove = oldRowViews.first {
-                            UIView.animate(withDuration: 0.25, animations: {
-                                toRemove.alpha = 0
-                            }, completion: { _ in
-                                toRemove.removeFromSuperview()
-                            })
-                            oldRowViews.removeFirst()
+                    for i in 0..<needToInsert {
+                        let newCatch = newTop5[currentCount + i]
+                        oldInfos.append(newCatch)
+                        let newRow = CatchInfoRowView(info: newCatch)
+                        newRow.onMissed = { [weak self] in
+                            self?.refreshCatchTrainCards()
                         }
-                    }
+                        newRow.alpha = 0
 
-                    // Add new rows if needed
-                    if updatedTop5.count > oldCatchInfos.count {
-                        for i in oldCatchInfos.count..<updatedTop5.count {
-                            let newInfo = updatedTop5[i]
-                            let newRow = CatchInfoRowView(info: newInfo)
-                            newRow.onMissed = { [weak self] in
-                                self?.refreshCatchTrainCards()
-                            }
-                            newRow.alpha = 0
-                            // 先拿到对应的 catchSectionView
-                            if let catchTrainCard = self.stackView.arrangedSubviews
-                                .first(where: { $0.tag == self.catchTrainCardBaseTag + legIndex }),
-                               let catchSectionView = catchTrainCard.subviews
-                                     .compactMap({ $0 as? UIStackView })
-                                     .first {
-                                catchSectionView.addArrangedSubview(newRow)
-                            }
-                            oldRowViews.append(newRow)
+                        // 把新行插到对应的 catchSectionView 底下
+                        if let catchTrainCard = self.stackView.arrangedSubviews
+                            .first(where: { $0.tag == self.catchTrainCardBaseTag + legIndex }),
+                           let catchSectionView = catchTrainCard.subviews
+                                .compactMap({ $0 as? UIStackView }).first {
+                            catchSectionView.addArrangedSubview(newRow)
+                            oldViews.append(newRow)
                             UIView.animate(withDuration: 0.25) {
                                 newRow.alpha = 1
                             }
-                            oldCatchInfos.append(newInfo)
                         }
                     }
 
-                    // Update existing rows with new info
-                    let commonCount = min(oldCatchInfos.count, updatedTop5.count)
-                    for i in 0..<commonCount {
-                        let updatedInfo = updatedTop5[i]
-                        oldCatchInfos[i] = updatedInfo
-                        if i < oldRowViews.count {
-                            oldRowViews[i].update(with: updatedInfo)
-                        }
-                    }
+                    // 4.4 更新缓存字典
+                    self.catchInfosDict[legIndex] = oldInfos
+                    self.catchInfoRowViewsDict[legIndex] = oldViews
 
-                    // Update caches
-                    self.catchInfosDict[legIndex] = oldCatchInfos
-                    self.catchInfoRowViewsDict[legIndex] = oldRowViews
-
-                    // 如果第一班车换了，就更新进度服务
-                    if let firstTrain = oldCatchInfos.first(where: { $0.catchStatus != .missed })
-                        ?? oldCatchInfos.first,
-                       firstTrain.expectedArrivalDate != self.nextTrainArrivalDate {
-                        self.nextTrainArrivalDate = firstTrain.expectedArrivalDate
+                    // 4.5 如果第一条发生变化，就更新 ProgressService
+                    if let newFirst = oldInfos.first,
+                       newFirst.expectedArrivalDate != self.nextTrainArrivalDate {
+                        self.nextTrainArrivalDate = newFirst.expectedArrivalDate
                         self.setupProgressService()
                     }
 
-                    // Record fetch time
-                    self.lastLineFetchTime[naptanId] = Date()
-
-                    group.leave()
+                    dispatchGroup.leave()
                 }
             }
         }
 
-        group.notify(queue: .main) {
+        dispatchGroup.notify(queue: .main) {
             self.isRefreshing = false
         }
     }
@@ -1523,5 +1549,4 @@ class PaddingLabel: UILabel {
                       height: size.height + insets.top + insets.bottom)
     }
 }
-
 
