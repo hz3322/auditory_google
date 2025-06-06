@@ -91,7 +91,7 @@ class CatchInfoRowView: UIView {
         var statusText = info.catchStatus.displayText
         
         if info.catchStatus != .missed {
-            statusText += " · \(abs(timeLeftRounded))s"
+            statusText += " · \(timeLeftRounded)s"
         } else if timeLeftRounded < 0 {
             statusText += " (by \(abs(timeLeftRounded))s)"
         }
