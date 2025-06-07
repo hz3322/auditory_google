@@ -97,10 +97,8 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
-//        let _ = addLogoTitleHeader(title: "Route preview")
         view.backgroundColor = UIColor.systemBackground
         
-
         setupMap()
         setupUI()
         setupActions()

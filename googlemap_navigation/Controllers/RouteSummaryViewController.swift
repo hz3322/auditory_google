@@ -109,6 +109,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private let lineFetchCooldown: TimeInterval = 2.0 // 2 seconds cooldown between requests for the same station
     private var isRefreshing = false
     
+    // MARK: - Location Manager Delegate
+    private var lastLocationUpdateTime: Date?
+    private var lastLocation: CLLocation?
+    private let minimumLocationChangeDistance: CLLocationDistance = 10.0 // 最小位置变化距离为10米
+    
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1259,16 +1264,35 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
 
     // MARK: - Location Manager Delegate
+    
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let newLocation = locations.last else { return }
+        
+        // 检查位置变化是否足够大
+        if let lastLocation = lastLocation {
+            let distanceChange = newLocation.distance(from: lastLocation)
+            if distanceChange < minimumLocationChangeDistance {
+                return // 如果位置变化小于10米，就跳过
+            }
+        }
+        
+        // 更新最后的位置
+        lastLocation = newLocation
+        lastLocationUpdateTime = Date()
+        
         guard let departureStationName = transitInfos.first?.departureStation else { return }
 
         // 算出最新的秒数
         let sec = estimatedSecondsToStation(for: departureStationName)
-        let minText = String(format: "%.0f min", sec / 60.0)
+        
+        // 格式化时间显示：分钟和秒数
+        let minutes = Int(sec) / 60
+        let seconds = Int(sec) % 60
+        let timeText = String(format: "%d min %d sec", minutes, seconds)
 
         // 更新到 walkToStationTimeLabel 上
         DispatchQueue.main.async {
-            self.walkToStationTimeLabel?.text = minText
+            self.walkToStationTimeLabel?.text = timeText
         }
     }
     
@@ -1344,25 +1368,50 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
      }
 
     private func estimatedSecondsToStation(for stationName: String) -> TimeInterval {
-        // 1. 拿到车站的经纬度
-        guard let stationCoord = stationCoordinates[stationName] else {
-            // 如果字典里根本没有这个站，就退回一个默认的静态值（比如你之前计算好的 walkToStationTimeSec）
+        print("🔍 [estimatedSecondsToStation] Starting calculation for station: \(stationName)")
+        
+        // 1. 尝试直接匹配
+        let normalizedName = StationNameUtils.normalizeStationName(stationName)
+        var stationCoord = stationCoordinates[normalizedName]
+        
+        // 2. 如果没找到，尝试模糊匹配
+        if stationCoord == nil {
+            print("⚠️ [estimatedSecondsToStation] Direct match not found, trying fuzzy match for: \(normalizedName)")
+            // 尝试找到包含这个站名的键
+            if let fuzzyKey = stationCoordinates.keys.first(where: { 
+                $0.lowercased().contains(normalizedName.lowercased()) || 
+                normalizedName.lowercased().contains($0.lowercased())
+            }) {
+                stationCoord = stationCoordinates[fuzzyKey]
+                print("✅ [estimatedSecondsToStation] Found fuzzy match: \(fuzzyKey)")
+            }
+        }
+        
+        guard let stationCoord = stationCoord else {
+            print("⚠️ [estimatedSecondsToStation] No station coordinate found (direct or fuzzy), using static walkToStationTimeSec: \(walkToStationTimeSec)")
             return walkToStationTimeSec
         }
         
-        // 2. 拿到"用户当前在何处"的位置，如果没有，就退回静态值
+        print("✅ [estimatedSecondsToStation] Found station coordinates: lat=\(stationCoord.latitude), lon=\(stationCoord.longitude)")
+        
         guard let userLocation = locationManager.location else {
+            print("⚠️ [estimatedSecondsToStation] User location not available, using static walkToStationTimeSec: \(walkToStationTimeSec)")
             return walkToStationTimeSec
         }
-        
+        print("✅ [estimatedSecondsToStation] User location: lat=\(userLocation.coordinate.latitude), lon=\(userLocation.coordinate.longitude)")
 
         let stationLocation = CLLocation(latitude: stationCoord.latitude,
                                          longitude: stationCoord.longitude)
-        let distanceToStation = userLocation.distance(from: stationLocation) // 单位：米
-        
+        let distanceToStation = userLocation.distance(from: stationLocation)
+        print("📏 [estimatedSecondsToStation] Distance to station: \(distanceToStation) meters")
 
-        let assumedWalkingSpeed: Double = 1.2
-        let estimatedWalkTime = distanceToStation / assumedWalkingSpeed // 单位：秒
+        let baseWalkingSpeed: Double = 1.2 // 基础步行速度
+        let adjustedWalkingSpeed = baseWalkingSpeed * weatherSpeedFactor // 根据天气调整步行速度
+        print("🌤️ [estimatedSecondsToStation] Weather speed factor: \(weatherSpeedFactor)")
+        print("🚶 [estimatedSecondsToStation] Base walking speed: \(baseWalkingSpeed) m/s, Adjusted speed: \(adjustedWalkingSpeed) m/s")
+        
+        let estimatedWalkTime = distanceToStation / adjustedWalkingSpeed
+        print("⏱️ [estimatedSecondsToStation] Estimated walk time: \(estimatedWalkTime) seconds")
         
         return estimatedWalkTime
     }
