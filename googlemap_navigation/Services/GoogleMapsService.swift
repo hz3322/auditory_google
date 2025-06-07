@@ -79,6 +79,16 @@ public final class GoogleMapsService {
                 return
             }
             
+            // Debug print the transit details
+            for step in steps {
+                if let transitDetails = step["transit_details"] as? [String: Any] {
+                    print("DEBUG - Transit Details:")
+                    print("Departure Time: \(transitDetails["departure_time"] ?? "nil")")
+                    print("Arrival Time: \(transitDetails["arrival_time"] ?? "nil")")
+                    print("Complete Transit Details: \(transitDetails)")
+                }
+            }
+            
             completion(.success(steps))
         }.resume()
     }

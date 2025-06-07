@@ -120,7 +120,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(red: 245/255, green: 248/255, blue: 255/255, alpha: 1)
+        setupUI()
+        setupLocationManager()
         
         self.title = "Journey Summary"
         navigationController?.navigationBar.tintColor = AppColors.accentBlue
@@ -547,13 +548,14 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 catchTitleLabel: catchTitleLabel,
                 index: index
             )
+            viewsToAdd.append(makeTransitCard(info: transitLegInfo, isTransfer: index > 0, legIndex: index))
             
             // Check for transfer leg and add transfer card if necessary
             if index < transitInfos.count - 1 {
-                viewsToAdd.append(makeCard(title: "🚶‍♀️ Transfer", subtitle: "\(transferTimesSec)"))
-             }
-             
-            viewsToAdd.append(makeTransitCard(info: transitLegInfo, isTransfer: index > 0, legIndex: index))
+               let  transferTimeSec = transitLegInfo.transferTimeSec
+                    viewsToAdd.append(makeCard(title: "🚶‍♀️ Transfer", subtitle: "\(transferTimesSec)"))
+            }
+           
         }
         
         if let walkEndText = walkToDestinationTime, !walkEndText.isEmpty {

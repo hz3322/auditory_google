@@ -213,6 +213,66 @@ public final class RouteLogic {
                     let crowd = CrowdLevel(raw: td["crowd_level"] as? String)
                     let delayStatus = line["status"] as? String ?? line["status_description"] as? String
                     
+                    // Calculate transfer time if this is not the first transit segment
+                    var transferTimeSec: Int? = nil
+                    if let lastTransit = transitInfos.last,
+                       let lastArrivalStation = lastTransit.arrivalStation,
+                       let currentDepartureStation = dep["name"] as? String {
+                        
+                        // Check if this is actually a line change
+                        let isLineChange = lastTransit.lineName != shortName
+                        
+                        if isLineChange {
+                            print("Calculating transfer time between:")
+                            print("From: \(lastArrivalStation) (Line: \(lastTransit.lineName))")
+                            print("To: \(currentDepartureStation) (Line: \(shortName))")
+                            
+                            // Use TfL API to get transfer time
+                            let group = DispatchGroup()
+                            group.enter()
+                            
+                            // First get the transfer time
+                            TfLDataService.shared.fetchTransferTime(
+                                from: lastArrivalStation,
+                                to: currentDepartureStation
+                            ) { time in
+                                if let transferTime = time {
+                                    print("Received transfer time: \(transferTime) minutes")
+                                    transferTimeSec = Int(transferTime)
+                                    
+                                    // After getting transfer time, fetch predictions for the next segment
+                                    if let stationId = TfLDataService.shared.getStationId(for: currentDepartureStation),
+                                       let lineId = TfLDataService.shared.tflLineId(from: shortName) {
+                                        print("Fetching predictions for next segment at \(currentDepartureStation)")
+                                        TfLDataService.shared.fetchTrainArrivals(
+                                            lineId: lineId,
+                                            stationNaptanId: stationId
+                                        ) { result in
+                                            if case .success(let arrivals) = result {
+                                                print("Found \(arrivals.count) predictions for next segment")
+                                                // Here you can update the predictions for the next segment
+                                            }
+                                            group.leave()
+                                        }
+                                    } else {
+                                        group.leave()
+                                    }
+                                } else {
+                                    print("No transfer time received from API")
+                                    group.leave()
+                                }
+                            }
+                            // Wait for both transfer time and predictions to complete
+                            group.wait()
+                            
+                            // Update the last transit info with transfer time
+                            if var lastInfo = transitInfos.last {
+                                lastInfo.transferTimeSec = transferTimeSec
+                                transitInfos[transitInfos.count - 1] = lastInfo
+                            }
+                        }
+                    }
+                    
                     let info = TransitInfo(
                         lineName: shortName,
                         departureStation: dep["name"] as? String ?? "-",
@@ -225,7 +285,8 @@ public final class RouteLogic {
                         crowdLevel: crowd,
                         numStops: td["num_stops"] as? Int,
                         lineColorHex: line["color"] as? String,
-                        delayStatus: delayStatus
+                        delayStatus: delayStatus,
+                        transferTimeSec: transferTimeSec
                     )
                     transitInfos.append(info)
                 }

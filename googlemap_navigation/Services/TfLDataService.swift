@@ -430,4 +430,69 @@ public final class TfLDataService {
         return predictions
     }
 
+    // MARK: - Transfer Time
+    
+    func fetchTransferTime(
+        from station1: String,
+        to station2: String,
+        completion: @escaping (Double?) -> Void
+    ) {
+        // If it's the same station, return 0
+        if station1 == station2 {
+            completion(0)
+            return
+        }
+        
+        // Get station IDs
+        guard let station1Id = stationIdMap[station1],
+              let station2Id = stationIdMap[station2] else {
+            print("Could not find station IDs for: \(station1) or \(station2)")
+            completion(nil)
+            return
+        }
+        
+        // Use the Journey API to get transfer time
+        let urlStr = "https://api.tfl.gov.uk/Journey/JourneyResults/\(station1Id)/to/\(station2Id)?mode=tube&app_key=\(APIKeys.tflAppKey)"
+        
+        guard let url = URL(string: urlStr) else {
+            print("Invalid URL for transfer time request")
+            completion(nil)
+            return
+        }
+        
+        print("Fetching transfer time from TfL API: \(urlStr)")
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error {
+                print("Error fetching transfer time: \(error)")
+                completion(nil)
+                return
+            }
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("Transfer time API response status: \(httpResponse.statusCode)")
+            }
+            
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let journeys = json["journeys"] as? [[String: Any]],
+                  let firstJourney = journeys.first,
+                  let legs = firstJourney["legs"] as? [[String: Any]],
+                  let firstLeg = legs.first,
+                  let duration = firstLeg["duration"] as? Double else {
+                print("Failed to parse transfer time response")
+                completion(nil)
+                return
+            }
+            
+            print("Successfully parsed transfer time: \(duration) minutes")
+            completion(duration)
+        }.resume()
+    }
+
+    // Add a public method to get station ID
+    func getStationId(for stationName: String) -> String? {
+        return stationIdMap[stationName]
+    }
+
 }
