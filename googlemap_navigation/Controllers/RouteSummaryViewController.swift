@@ -137,51 +137,45 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                  guard let self = self else { return }
                  self.populateSummary()
                  self.calculateStationPositionRatio()
-                 // 只有当初始的 CatchInfo 都到位后，才启动定时刷新
-                 // 不要在 viewDidLoad 里重复调用
-                 // self.startArrivalsAutoRefresh()
+                 
+                 // 在 populateSummary 完成后添加初始高亮
+                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                     guard let self = self else { return }
+                     if let walkToStationCard = self.stackView.arrangedSubviews.first(where: { $0.tag == self.walkToStationCardTag }) {
+                         self.activeJourneySegmentCard = walkToStationCard
+                         
+                         UIView.animate(withDuration: 0.35, delay: 0.05, options: .curveEaseOut, animations: {
+                             walkToStationCard.transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
+                             walkToStationCard.backgroundColor = AppColors.highlightYellow
+                             walkToStationCard.layer.shadowOpacity = 0.15
+                             walkToStationCard.layer.shadowRadius = 12
+                             
+                             // Update text colors
+                             walkToStationCard.subviews.forEach { view in
+                                 if let stack = view as? UIStackView {
+                                     stack.arrangedSubviews.forEach { subview in
+                                         if let label = subview as? UILabel {
+                                             label.textColor = AppColors.highlightText
+                                         }
+                                     }
+                                 }
+                             }
+                             
+                             // Scroll to make the active card visible
+                             let cardFrameInScrollView = self.scrollView.convert(walkToStationCard.frame, from: self.stackView)
+                             var visibleRect = cardFrameInScrollView
+                             visibleRect.origin.y -= 20
+                             visibleRect.size.height += 40
+                             self.scrollView.scrollRectToVisible(visibleRect, animated: true)
+                         })
+                     }
+                 }
              }
         
         locationManager.delegate = self
         locationManager.requestWhenInUseAuthorization()
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         locationManager.distanceFilter  = kCLDistanceFilterNone
-        
-       
-               
-        
-        // Add initial highlighting for Walk to Station card
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self = self else { return }
-            if let walkToStationCard = self.stackView.arrangedSubviews.first(where: { $0.tag == self.walkToStationCardTag }) {
-                self.activeJourneySegmentCard = walkToStationCard
-                
-                UIView.animate(withDuration: 0.35, delay: 0.05, options: .curveEaseOut, animations: {
-                    walkToStationCard.transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
-                    walkToStationCard.backgroundColor = AppColors.highlightYellow
-                    walkToStationCard.layer.shadowOpacity = 0.15
-                    walkToStationCard.layer.shadowRadius = 12
-                    
-                    // Update text colors
-                    walkToStationCard.subviews.forEach { view in
-                        if let stack = view as? UIStackView {
-                            stack.arrangedSubviews.forEach { subview in
-                                if let label = subview as? UILabel {
-                                    label.textColor = AppColors.highlightText
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Scroll to make the active card visible
-                    let cardFrameInScrollView = self.scrollView.convert(walkToStationCard.frame, from: self.stackView)
-                    var visibleRect = cardFrameInScrollView
-                    visibleRect.origin.y -= 20
-                    visibleRect.size.height += 40
-                    self.scrollView.scrollRectToVisible(visibleRect, animated: true)
-                })
-            }
-        }
         
         // Start periodic refresh of train arrivals
         startArrivalsAutoRefresh()
@@ -1058,7 +1052,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             for i in 0..<oldInfos.count {
                 var info = oldInfos[i]
                 let secondsUntilTrain = info.expectedArrivalDate.timeIntervalSince(now)
-                let travelSec = estimatedSecondsToStation(for: departureStationName) + stationToPlatformTimeSec
+                let travelSec = estimatedSecondsToStation(for: departureStationName) + self.stationToPlatformTimeSec
                 let newTimeLeft = secondsUntilTrain - travelSec
                 let newStatus = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: newTimeLeft)
 
