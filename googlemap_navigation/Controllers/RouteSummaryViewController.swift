@@ -117,6 +117,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var lastLocation: CLLocation?
     private let minimumLocationChangeDistance: CLLocationDistance = 10.0 // 最小位置变化距离为10米
     
+    // Add a cache for estimated times
+    private var estimatedTimeCache: [String: TimeInterval] = [:]
+    
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -222,6 +225,36 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     }
     
     // MARK: - UI Setup
+    private func setupUI() {
+        view.backgroundColor = UIColor(red: 245/255, green: 248/255, blue: 255/255, alpha: 1)
+        
+        self.title = "Journey Summary"
+        navigationController?.navigationBar.tintColor = AppColors.accentBlue
+        
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "chevron.left"),
+            style: .plain,
+            target: self,
+            action: #selector(backButtonTapped)
+        )
+        
+        print("🕵️ viewDidLoad: walkToStationTimeMin = \(walkToStationTimeMin), walkToStationTimeSec = \(walkToStationTimeSec)")
+        
+        self.walkToStationTimeSec = walkToStationTimeMin * 60.0 // for progress bar Uses Only
+        setupProgressBar()
+        setupLayout()
+        
+        // Add the call to fetch and show route summary
+        fetchAndShowRouteSummary()
+    }
+    
+    private func setupLocationManager() {
+        locationManager.delegate = self
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        locationManager.distanceFilter = kCLDistanceFilterNone
+    }
+    
     private func setupProgressBar() {
         // Use summaryLabel instead of sloganLabel
         view.addSubview(summaryLabel)
@@ -409,6 +442,21 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             deltaTimeLabel.text = "Route data incomplete."
             deltaTimeLabel.textColor = .systemRed
             return
+        }
+
+        // Check if departure point is current location
+        if let currentLocation = locationManager.location?.coordinate,
+           let routeStart = routeStartCoordinate {
+            let distance = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
+                .distance(from: CLLocation(latitude: routeStart.latitude, longitude: routeStart.longitude))
+            
+            // If departure point is not current location (more than 100 meters away)
+            if distance > 100 {
+                // Use static Google Maps data
+                deltaTimeLabel.text = "Using planned route data"
+                deltaTimeLabel.textColor = .secondaryLabel
+                return
+            }
         }
 
         let normalizedKey = StationNameUtils.normalizeStationName(departureStationName)
@@ -1081,11 +1129,13 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             
             print("【刷新开始】legIndex=\(legIndex)，当前 oldInfos 的 expectedArrivalDates = \(oldInfos.map{ $0.expectedArrivalDate })")
 
-            // —— 1.1 动态更新：只更新 timeLeft + catchStatus，不动数组大小 —— 
+            // Get the estimated time once for this station
+            let travelSec = estimatedSecondsToStation(for: departureStationName) + self.stationToPlatformTimeSec
+            
+            // Update all infos with the same travel time
             for i in 0..<oldInfos.count {
                 var info = oldInfos[i]
                 let secondsUntilTrain = info.expectedArrivalDate.timeIntervalSince(now)
-                let travelSec = estimatedSecondsToStation(for: departureStationName) + self.stationToPlatformTimeSec
                 let newTimeLeft = secondsUntilTrain - travelSec
                 let newStatus = CatchInfo.determineInitialCatchStatus(timeLeftToCatch: newTimeLeft)
 
@@ -1093,7 +1143,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 info.catchStatus = newStatus
                 oldInfos[i] = info
 
-                // 更新该行的 UI
+                // Update the row view
                 let rowView = oldViews[i]
                 let updatedInfo = CatchInfo(
                     lineName:            info.lineName,
@@ -1381,16 +1431,32 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
      }
 
     private func estimatedSecondsToStation(for stationName: String) -> TimeInterval {
+        // Check cache first
+        if let cachedTime = estimatedTimeCache[stationName] {
+            return cachedTime
+        }
+        
         print("🔍 [estimatedSecondsToStation] Starting calculation for station: \(stationName)")
         
-        // 1. 尝试直接匹配
+        // Check if departure point is current location
+        if let currentLocation = locationManager.location?.coordinate,
+           let routeStart = routeStartCoordinate {
+            let distance = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
+                .distance(from: CLLocation(latitude: routeStart.latitude, longitude: routeStart.longitude))
+            
+            // If departure point is not current location, cache and return static time
+            if distance > 100 {
+                print("⚠️ [estimatedSecondsToStation] Departure is not current location, using static time: \(walkToStationTimeSec)")
+                estimatedTimeCache[stationName] = walkToStationTimeSec
+                return walkToStationTimeSec
+            }
+        }
+        
+        // Rest of the existing calculation logic...
         let normalizedName = StationNameUtils.normalizeStationName(stationName)
         var stationCoord = stationCoordinates[normalizedName]
         
-        // 2. 如果没找到，尝试模糊匹配
         if stationCoord == nil {
-            print("⚠️ [estimatedSecondsToStation] Direct match not found, trying fuzzy match for: \(normalizedName)")
-            // 尝试找到包含这个站名的键
             if let fuzzyKey = stationCoordinates.keys.first(where: { 
                 $0.lowercased().contains(normalizedName.lowercased()) || 
                 normalizedName.lowercased().contains($0.lowercased())
@@ -1401,31 +1467,27 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         }
         
         guard let stationCoord = stationCoord else {
-            print("⚠️ [estimatedSecondsToStation] No station coordinate found (direct or fuzzy), using static walkToStationTimeSec: \(walkToStationTimeSec)")
+            print("⚠️ [estimatedSecondsToStation] No station coordinate found, using static time: \(walkToStationTimeSec)")
+            estimatedTimeCache[stationName] = walkToStationTimeSec
             return walkToStationTimeSec
         }
-        
-        print("✅ [estimatedSecondsToStation] Found station coordinates: lat=\(stationCoord.latitude), lon=\(stationCoord.longitude)")
         
         guard let userLocation = locationManager.location else {
-            print("⚠️ [estimatedSecondsToStation] User location not available, using static walkToStationTimeSec: \(walkToStationTimeSec)")
+            print("⚠️ [estimatedSecondsToStation] User location not available, using static time: \(walkToStationTimeSec)")
+            estimatedTimeCache[stationName] = walkToStationTimeSec
             return walkToStationTimeSec
         }
-        print("✅ [estimatedSecondsToStation] User location: lat=\(userLocation.coordinate.latitude), lon=\(userLocation.coordinate.longitude)")
 
         let stationLocation = CLLocation(latitude: stationCoord.latitude,
-                                         longitude: stationCoord.longitude)
+                                       longitude: stationCoord.longitude)
         let distanceToStation = userLocation.distance(from: stationLocation)
-        print("📏 [estimatedSecondsToStation] Distance to station: \(distanceToStation) meters")
-
-        let baseWalkingSpeed: Double = 1.2 // 基础步行速度
-        let adjustedWalkingSpeed = baseWalkingSpeed * weatherSpeedFactor // 根据天气调整步行速度
-        print("🌤️ [estimatedSecondsToStation] Weather speed factor: \(weatherSpeedFactor)")
-        print("🚶 [estimatedSecondsToStation] Base walking speed: \(baseWalkingSpeed) m/s, Adjusted speed: \(adjustedWalkingSpeed) m/s")
         
+        let baseWalkingSpeed: Double = 1.2
+        let adjustedWalkingSpeed = baseWalkingSpeed * weatherSpeedFactor
         let estimatedWalkTime = distanceToStation / adjustedWalkingSpeed
-        print("⏱️ [estimatedSecondsToStation] Estimated walk time: \(estimatedWalkTime) seconds")
         
+        // Cache the result
+        estimatedTimeCache[stationName] = estimatedWalkTime
         return estimatedWalkTime
     }
 
