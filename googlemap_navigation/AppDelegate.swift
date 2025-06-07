@@ -8,6 +8,7 @@ import FirebaseAuth
 struct APIKeys {
     static let googleMaps = "AIzaSyDbJBDCkUpNgE2nb0yz8J454wGgvaZggSE"
     static let tflAppKey = "0bc9522b0b77427eb20e858550d6a072"
+    static let openWeather = "5d62e37dfd0d091bdff855ad92030830"
 }
 
 @main

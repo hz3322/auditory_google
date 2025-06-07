@@ -20,12 +20,11 @@ public final class RouteLogic {
     func fetchRoute(
         from userLocation: CLLocation,
         to destinationCoord: CLLocationCoordinate2D,
-        speedMultiplier: Double,
         completion: @escaping (
             _ walkSteps: [WalkStep],
-            _ transitInfos: [TransitInfo],
-            _ adjustedTime: Double,
-            _ stepsRaw: [[String: Any]],
+            _ transitSegments: [TransitInfo],
+            _ totalTime: Double,
+            _ routeSteps: [[String: Any]],
             _ walkToStationMin: Double,
             _ walkToDestinationMin: Double
         ) -> Void
@@ -37,116 +36,131 @@ public final class RouteLogic {
                 return
             }
             
-            GoogleMapsService.shared.fetchTransitRoute(
-                from: userLocation.coordinate,
-                to: destinationCoord
-            ) { result in
-                switch result {
-                case .success(let steps):
-                    let (_, transitMin, walkSteps, segments) = self.calculateRouteTimes(from: steps)
-                    let transitSteps = steps.filter { $0["travel_mode"] as? String == "TRANSIT" }
-                    var updatedSegments = segments
-                    
-                    // Use a DispatchGroup to wait for asynchronous tasks (like fetching journey planner stops) to complete.
-                    let group = DispatchGroup()
-                    
-                    // Variables to hold calculated walking times.
-                    var entryWalkMin: Double? = nil
-                    var exitWalkMin: Double? = nil
-                    
-                    let depCoord = nearestStationCoord.coord
-                    let arrCoord = segments.last?.arrivalCoordinate ?? destinationCoord
-                    
-                    let dispatch = DispatchGroup()
-                    dispatch.enter()
-                    GoogleMapsService.shared.fetchWalkingTime(from: userLocation.coordinate, to: depCoord) { result in
-                        entryWalkMin = result
-                        dispatch.leave()
-                    }
-                    
-                    dispatch.enter()
-                    GoogleMapsService.shared.fetchWalkingTime(from: arrCoord, to: destinationCoord) { result in
-                        exitWalkMin = result
-                        dispatch.leave()
-                    }
-                    
-                    for (index, seg) in segments.enumerated() {
-                        guard index < transitSteps.count,
-                              let startCoord = GoogleMapsService.shared.extractCoordinate(from: transitSteps[index], key: "start_location"),
-                              let endCoord = GoogleMapsService.shared.extractCoordinate(from: transitSteps[index], key: "end_location") else {
-                            continue
+            // First fetch weather to get speed factor
+            WeatherService.shared.fetchCurrentWeather(at: userLocation.coordinate) { condition, suggestion, gradient in
+                // Get the speed factor from the weather condition
+                var speedFactor = WeatherCondition.from(weatherId: 800).speedFactor // Default to clear weather
+                if let weatherCondition = WeatherCondition(rawValue: condition) {
+                    speedFactor = weatherCondition.speedFactor
+                }
+                
+                GoogleMapsService.shared.fetchTransitRoute(
+                    from: userLocation.coordinate,
+                    to: destinationCoord
+                ) { result in
+                    switch result {
+                    case .success(let steps):
+                        let (_, transitMin, walkSteps, segments) = self.calculateRouteTimes(from: steps)
+                        let transitSteps = steps.filter { $0["travel_mode"] as? String == "TRANSIT" }
+                        var updatedSegments = segments
+                        
+                        // Use a DispatchGroup to wait for asynchronous tasks
+                        let group = DispatchGroup()
+                        
+                        // Variables to hold calculated walking times
+                        var entryWalkMin: Double? = nil
+                        var exitWalkMin: Double? = nil
+                        
+                        let depCoord = nearestStationCoord.coord
+                        let arrCoord = segments.last?.arrivalCoordinate ?? destinationCoord
+                        
+                        let dispatch = DispatchGroup()
+                        dispatch.enter()
+                        GoogleMapsService.shared.fetchWalkingTime(from: userLocation.coordinate, to: depCoord) { result in
+                            // Apply weather speed factor to walking time
+                            if let walkingTime = result {
+                                entryWalkMin = walkingTime / speedFactor
+                            }
+                            dispatch.leave()
                         }
                         
-                        updatedSegments[index].arrivalCoordinate = endCoord
+                        dispatch.enter()
+                        GoogleMapsService.shared.fetchWalkingTime(from: arrCoord, to: destinationCoord) { result in
+                            // Apply weather speed factor to walking time
+                            if let walkingTime = result {
+                                exitWalkMin = walkingTime / speedFactor
+                            }
+                            dispatch.leave()
+                        }
                         
-                        group.enter()
-                        TfLDataService.shared.fetchJourneyPlannerStops(fromCoord: startCoord, toCoord: endCoord) { stops in
-                            var updated = seg
-                            
-                            if stops.contains(where: { $0.lowercased().contains("bus") }) {
-                                updated.stopNames = []
-                                updated.numStops = 0
-                                group.leave()
-                                return
+                        for (index, seg) in segments.enumerated() {
+                            guard index < transitSteps.count,
+                                  let startCoord = GoogleMapsService.shared.extractCoordinate(from: transitSteps[index], key: "start_location"),
+                                  let endCoord = GoogleMapsService.shared.extractCoordinate(from: transitSteps[index], key: "end_location") else {
+                                continue
                             }
                             
-                            if index == 0 {
-                                var extended = stops
-                                if let first = stops.first, first != seg.departureStation {
-                                    extended.insert(seg.departureStation ?? "-", at: 0)
+                            updatedSegments[index].arrivalCoordinate = endCoord
+                            
+                            group.enter()
+                            TfLDataService.shared.fetchJourneyPlannerStops(fromCoord: startCoord, toCoord: endCoord) { stops in
+                                var updated = seg
+                                
+                                if stops.contains(where: { $0.lowercased().contains("bus") }) {
+                                    updated.stopNames = []
+                                    updated.numStops = 0
+                                    group.leave()
+                                    return
                                 }
-                                updated.stopNames = extended
-                                updated.departureStation = extended.first
-                                updated.arrivalStation = extended.last
-                            } else {
-                                if stops.isEmpty {
-                                    updated.stopNames = [updatedSegments[index - 1].arrivalStation ?? "-", seg.arrivalStation ?? "-"]
+                                
+                                if index == 0 {
+                                    var extended = stops
+                                    if let first = stops.first, first != seg.departureStation {
+                                        extended.insert(seg.departureStation ?? "-", at: 0)
+                                    }
+                                    updated.stopNames = extended
+                                    updated.departureStation = extended.first
+                                    updated.arrivalStation = extended.last
                                 } else {
-                                    updated.stopNames = stops
-                                    if updatedSegments[index - 1].arrivalStation != nil {
-                                        updated.stopNames.insert(updatedSegments[index - 1].arrivalStation!, at: 0)
+                                    if stops.isEmpty {
+                                        updated.stopNames = [updatedSegments[index - 1].arrivalStation ?? "-", seg.arrivalStation ?? "-"]
+                                    } else {
+                                        updated.stopNames = stops
+                                        if updatedSegments[index - 1].arrivalStation != nil {
+                                            updated.stopNames.insert(updatedSegments[index - 1].arrivalStation!, at: 0)
+                                        }
+                                    }
+                                    updated.departureStation = updated.stopNames.first
+                                    updated.arrivalStation = updated.stopNames.last
+                                }
+                                
+                                updated.numStops = max(0, updated.stopNames.count - 1)
+                                
+                                if let times = updated.durationText?.components(separatedBy: " -"), times.count == 2 {
+                                    let formatter = DateFormatter()
+                                    formatter.dateFormat = "HH:mm"
+                                    if let start = formatter.date(from: times[0]), let end = formatter.date(from: times[1]) {
+                                        let minutes = Int(end.timeIntervalSince(start) / 60)
+                                        updated.durationTime = "\(minutes) min"
                                     }
                                 }
-                                updated.departureStation = updated.stopNames.first
-                                updated.arrivalStation = updated.stopNames.last
+                                
+                                updatedSegments[index] = updated
+                                group.leave()
                             }
-                            
-                            updated.numStops = max(0, updated.stopNames.count - 1)
-                            
-                            if let times = updated.durationText?.components(separatedBy: " -"), times.count == 2 {
-                                let formatter = DateFormatter()
-                                formatter.dateFormat = "HH:mm"
-                                if let start = formatter.date(from: times[0]), let end = formatter.date(from: times[1]) {
-                                    let minutes = Int(end.timeIntervalSince(start) / 60)
-                                    updated.durationTime = "\(minutes) min"
-                                }
-                            }
-                            
-                            updatedSegments[index] = updated
-                            group.leave()
                         }
-                    }
-                    
-                    dispatch.notify(queue: .main) {
-                        print("Entry walking time (min):", entryWalkMin ?? -1)
-                        print("Exit walking time (min):", exitWalkMin ?? -1)
                         
-                        group.notify(queue: .main) {
-                            let adjTime = (entryWalkMin ?? 0.0) + (exitWalkMin ?? 0.0) + transitMin
-                            completion(
-                                walkSteps,
-                                updatedSegments,
-                                adjTime,
-                                steps,
-                                entryWalkMin ?? 0.0,
-                                exitWalkMin ?? 0.0
-                            )
+                        dispatch.notify(queue: .main) {
+                            print("Entry walking time (min):", entryWalkMin ?? -1)
+                            print("Exit walking time (min):", exitWalkMin ?? -1)
+                            
+                            group.notify(queue: .main) {
+                                let adjTime = (entryWalkMin ?? 0.0) + (exitWalkMin ?? 0.0) + transitMin
+                                completion(
+                                    walkSteps,
+                                    updatedSegments,
+                                    adjTime,
+                                    steps,
+                                    entryWalkMin ?? 0.0,
+                                    exitWalkMin ?? 0.0
+                                )
+                            }
                         }
+                        
+                    case .failure(let error):
+                        print("[RouteLogic] Failed to fetch route: \(error)")
+                        completion([], [], 0.0, [], 0.0, 0.0)
                     }
-                    
-                case .failure(let error):
-                    print("[RouteLogic] Failed to fetch route: \(error)")
-                    completion([], [], 0.0, [], 0.0, 0.0)
                 }
             }
         }
@@ -232,19 +246,24 @@ public final class RouteLogic {
     ///   - estimated: The total estimated time as a formatted string.
     ///   - walkToStationMin: Estimated walking time to the first station in minutes.
     ///   - walkToDestinationMin: Estimated walking time from the last station to the destination in minutes.
+    ///   - currentWeather: The current weather condition.
+    ///   - weatherSpeedFactor: The weather-adjusted speed factor.
     func navigateToSummary(
         from viewController: UIViewController,
         transitInfos: [TransitInfo],
         walkSteps: [WalkStep],
         estimated: String?,
         walkToStationMin: Double,
-        walkToDestinationMin: Double
+        walkToDestinationMin: Double,
+        currentWeather: String?,
+        weatherSpeedFactor: Double
     ) {
         let summaryVC = RouteSummaryViewController()
         summaryVC.totalEstimatedTime = estimated
-        print("correctly passed ?? walk to station time", walkToStationMin)
         summaryVC.walkToStationTime = String(format: "%.0f min", walkToStationMin)
         summaryVC.walkToDestinationTime = String(format: "%.0f min", walkToDestinationMin)
+        summaryVC.currentWeather = currentWeather
+        summaryVC.weatherSpeedFactor = weatherSpeedFactor
         
         if let durationText = transitInfos.first?.durationText {
             let parts = durationText.components(separatedBy: " -")

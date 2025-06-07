@@ -77,6 +77,12 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
         return label
     }()
 
+    private let weatherBannerView: WeatherBannerView = {
+        let view = WeatherBannerView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+
     private let bottomConfirmButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle("Confirm Route", for: .normal)
@@ -129,12 +135,12 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
             bottomCardView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomCardView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomCardView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            bottomCardView.heightAnchor.constraint(equalToConstant: 140),
+            bottomCardView.heightAnchor.constraint(equalToConstant: 120),
 
             bottomEstimatedLabel.topAnchor.constraint(equalTo: bottomCardView.topAnchor, constant: 20),
             bottomEstimatedLabel.leadingAnchor.constraint(equalTo: bottomCardView.leadingAnchor, constant: 20),
             bottomEstimatedLabel.trailingAnchor.constraint(equalTo: bottomCardView.trailingAnchor, constant: -20),
-            bottomEstimatedLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
+            bottomEstimatedLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
 
             bottomConfirmButton.topAnchor.constraint(equalTo: bottomEstimatedLabel.bottomAnchor, constant: 12),
             bottomConfirmButton.leadingAnchor.constraint(equalTo: bottomCardView.leadingAnchor, constant: 20),
@@ -159,9 +165,8 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
 
         RouteLogic.shared.fetchRoute(
             from: userLocation,
-            to: to,
-            speedMultiplier: 1.0
-        ) {[weak self] walkSteps, transitSegments, totalTime, routeSteps, walkToStationMin, walkToDestinationMin in
+            to: to
+        ) { [weak self] walkSteps, transitSegments, totalTime, routeSteps, walkToStationMin, walkToDestinationMin in
             guard let self = self else { return }
             self.parsedWalkSteps = walkSteps
             self.transitInfos = transitSegments
@@ -189,13 +194,6 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
 
             self.drawPolyline(from: routeSteps)
             self.addMarkers()
-
-            // Debugging: Print transitInfos
-            print("--- Debugging transitInfos ---")
-            for (index, transitInfo) in self.transitInfos.enumerated() {
-                print("Segment \(index): Line: \(transitInfo.lineName ?? "N/A"), From: \(transitInfo.departureStation ?? "N/A"), To: \(transitInfo.arrivalStation ?? "N/A")")
-            }
-            print("----------------------------")
         }
     }
 
@@ -293,7 +291,7 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
 
     // MARK: - Confirm & Navigation
     @objc private func confirmRouteTapped() {
-        guard !transitInfos.isEmpty || !parsedWalkSteps.isEmpty else { // Check also for walk-only routes
+        guard !transitInfos.isEmpty || !parsedWalkSteps.isEmpty else {
             let alert = UIAlertController(title: "Route Not Ready",
                                           message: "Still loading route information or no route found. Please try again.",
                                           preferredStyle: .alert)

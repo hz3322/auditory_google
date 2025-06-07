@@ -17,6 +17,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private var startTextField: UITextField!
     private var destinationTextField: UITextField!
     private var areaLabel: UILabel!   // Displays current geographical area
+    private var weatherBannerView: WeatherBannerView!
 
     // --- Frequent Places Properties ---
     private var frequentPlaces: [SavedPlace] = []
@@ -95,6 +96,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         setupScrollView()
         setupContentStack()
         setupGreetingAndLogo()
+        setupWeatherBanner()
         setupMapViewCard()
         setupSearchCard()
         setupStartTripButton()
@@ -337,6 +339,34 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         contentStack.addArrangedSubview(startTripButton)
         updateStartTripButtonState() // Set initial state
         contentStack.setCustomSpacing(30, after: startTripButton)
+    }
+    
+    private func setupWeatherBanner() {
+        weatherBannerView = WeatherBannerView()
+        weatherBannerView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(weatherBannerView)
+        contentStack.setCustomSpacing(16, after: weatherBannerView)
+
+        // Set a minimum height (text will expand as needed)
+        weatherBannerView.heightAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
+    }
+
+    private func updateWeatherBanner(condition: String, suggestion: String, gradient: (start: UIColor, end: UIColor)) {
+        weatherBannerView.configure(condition: condition,
+                                  suggestion: suggestion,
+                                  gradient: gradient)
+    }
+
+    private func fetchCurrentWeather(at coordinate: CLLocationCoordinate2D) {
+        WeatherService.shared.fetchCurrentWeather(at: coordinate) { [weak self] condition, suggestion, gradient in
+            DispatchQueue.main.async {
+                self?.updateWeatherBanner(
+                    condition: condition,
+                    suggestion: suggestion,
+                    gradient: gradient
+                )
+            }
+        }
     }
     
     private func setupMapViewCard() {
@@ -868,6 +898,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         fetchCurrentAreaName(from: newCoordinate) { [weak self] area in
             DispatchQueue.main.async { self?.updateAreaBlock(area) }
         }
+        
+        // Fetch weather data with the new coordinates
+        fetchCurrentWeather(at: newCoordinate)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

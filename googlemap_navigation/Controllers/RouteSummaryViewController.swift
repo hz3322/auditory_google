@@ -37,6 +37,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     var routeStartCoordinate: CLLocationCoordinate2D? = nil
     /// The destination coordinate for the entire route, passed from the previous screen.
     var routeDestinationCoordinate: CLLocationCoordinate2D? = nil
+    var currentWeather: String?
+    var weatherSpeedFactor: Double = 1.0
     
     var walkToStationTimeSec: Double = 0
     var stationToPlatformTimeSec: Double = 120
