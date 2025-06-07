@@ -23,6 +23,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var dotCenterYConstraint: NSLayoutConstraint?
     private var activeJourneySegmentCard: UIView?
     private var currentActiveTransitLegIndex: Int?
+    private var pacingManager: PacingManager?
+    private var currentLocation: CLLocation?
+    private var journeyProgressService: JourneyProgressService?
     
     var totalEstimatedTime: String?
     var walkToStationTime: String?
@@ -197,6 +200,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         arrivalsRefreshTimer = nil
         progressService?.stop()
         print("RouteSummaryViewController deinitialized")
+        pacingManager?.stopPacing()
+        pacingManager = nil
     }
     
     override func viewWillAppear(_ animated: Bool) {
@@ -430,14 +435,33 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         let service = JourneyProgressService(
             walkToStationSec: walkToStationTimeSec,
             stationToPlatformSec: stationToPlatformTimeSec,
-            transferTimesSec: transferTimesSec, // Ensure this is correctly populated
+            transferTimesSec: transferTimesSec,
             trainArrival: nextTrainArrivalDate,
-            originLocation: userOriginLocation, // Can be nil if service handles it
+            originLocation: userOriginLocation,
             stationLocation: stationLocationForService
         )
         service.delegate = self
-        service.start() // This will begin delegate callbacks
+        service.start()
         self.progressService = service
+        
+        // Setup PacingManager
+        setupPacingManager(stationLocation: stationLocationForService)
+    }
+    
+    private func setupPacingManager(stationLocation: CLLocation) {
+        pacingManager = PacingManager()
+        
+        // Set initial values
+        if let userOriginLocation = userOriginLocation {
+            pacingManager?.distanceToStation = userOriginLocation.distance(from: stationLocation)
+        }
+        pacingManager?.timeToDeparture = nextTrainArrivalDate.timeIntervalSince(Date())
+        
+        // Handle speed updates
+        pacingManager?.onSpeedUpdate = { [weak self] currentSpeed, targetSpeed in
+            // Update UI with speed information if needed
+            print("Current speed: \(currentSpeed) m/s, Target speed: \(targetSpeed) m/s")
+        }
     }
     
     // MARK: - Summary Content & Animations
@@ -1266,34 +1290,19 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     // MARK: - Location Manager Delegate
     
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let newLocation = locations.last else { return }
+        guard let location = locations.last else { return }
         
-        // 检查位置变化是否足够大
-        if let lastLocation = lastLocation {
-            let distanceChange = newLocation.distance(from: lastLocation)
-            if distanceChange < minimumLocationChangeDistance {
-                return // 如果位置变化小于10米，就跳过
-            }
-        }
+        // Update current location
+        currentLocation = location
         
-        // 更新最后的位置
-        lastLocation = newLocation
-        lastLocationUpdateTime = Date()
+        // Update journey progress
+        journeyProgressService?.updateProgressWithLocation(currentLocation: location)
         
-        guard let departureStationName = transitInfos.first?.departureStation else { return }
-
-        // 算出最新的秒数
-        let sec = estimatedSecondsToStation(for: departureStationName)
+        // Update pacing manager with new location
+        pacingManager?.updateWithNewLocation(location)
         
-        // 格式化时间显示：分钟和秒数
-        let minutes = Int(sec) / 60
-        let seconds = Int(sec) % 60
-        let timeText = String(format: "%d min %d sec", minutes, seconds)
-
-        // 更新到 walkToStationTimeLabel 上
-        DispatchQueue.main.async {
-            self.walkToStationTimeLabel?.text = timeText
-        }
+        // Update UI with new location
+        updateUIWithNewLocation(location)
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -1414,6 +1423,41 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         print("⏱️ [estimatedSecondsToStation] Estimated walk time: \(estimatedWalkTime) seconds")
         
         return estimatedWalkTime
+    }
+
+    private func updateUIWithNewLocation(_ location: CLLocation) {
+        // Update the progress bar position
+        if let progressService = journeyProgressService {
+            let progress = progressService.progress
+            updateProgressBar(with: progress)
+        }
+        
+        // Update the walk time label if needed
+        if let walkToStationTimeLabel = walkToStationTimeLabel {
+            let minutes = Int(ceil(walkToStationTimeSec / 60.0))
+            walkToStationTimeLabel.text = "\(minutes) min"
+        }
+    }
+
+    private func updateProgressBar(with progress: Double) {
+        // Update the progress bar UI
+        let clampedProgress = min(max(progress, 0), 1)
+        if progressBarBackground.bounds.width > 0 {
+            let startPadding: CGFloat = 4
+            let personDotEffectiveWidth = personDot.intrinsicContentSize.width > 0 ? personDot.intrinsicContentSize.width : 28
+            let platformEmojiEffectiveWidth = platformEmoji.intrinsicContentSize.width > 0 ? platformEmoji.intrinsicContentSize.width : 22
+            let platformEmojiTrailingPadding: CGFloat = 8
+            
+            let endPointForDotLeadingEdge = progressBarBackground.bounds.width - platformEmojiTrailingPadding - platformEmojiEffectiveWidth - personDotEffectiveWidth
+            let actualTravelableWidth = max(0, endPointForDotLeadingEdge - startPadding)
+            
+            let leadingConstant = startPadding + (actualTravelableWidth * CGFloat(clampedProgress))
+            personDotLeadingConstraint?.constant = leadingConstant
+            
+            UIView.animate(withDuration: 0.25) {
+                self.progressBarBackground.layoutIfNeeded()
+            }
+        }
     }
 }
 
