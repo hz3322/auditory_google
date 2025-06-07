@@ -94,6 +94,7 @@ class JourneyProgressService {
     @objc private func update() {
         let now = Date()
         let elapsed = now.timeIntervalSince(startTime)
+        // Only include stationToPlatformSec once in total time calculation
         let totalTime = walkToStationSec + stationToPlatformSec + transferTimesSec.reduce(0, +)
         let delta = trainArrival.timeIntervalSince(now)
 
@@ -105,11 +106,14 @@ class JourneyProgressService {
             let progressInPhase = min(1.0, max(0, (elapsed - phaseStart) / stationToPlatformSec))
             phaseProgress = progressInPhase
             progress = min(1.0, max(0, (elapsed / totalTime)))
-            notifyDelegate(phaseOverride: .stationToPlatform, phaseProgressOverride: progressInPhase) // Status calculated inside
-            if progressInPhase >= 1.0 && !transferTimesSec.isEmpty {
-                switchToPhase(.transferWalk(index: 0))
-            } else if progressInPhase >= 1.0 {
-                switchToPhase(.finished)
+            notifyDelegate(phaseOverride: .stationToPlatform, phaseProgressOverride: progressInPhase)
+            // After station to platform, go directly to first train if no transfers
+            if progressInPhase >= 1.0 {
+                if !transferTimesSec.isEmpty {
+                    switchToPhase(.transferWalk(index: 0))
+                } else {
+                    switchToPhase(.onTrain(legIndex: 0))
+                }
             }
         } else if case .transferWalk(let idx) = phase, idx < transferTimesSec.count {
             let prevTime = walkToStationSec + stationToPlatformSec + transferTimesSec.prefix(idx).reduce(0, +)
@@ -122,7 +126,7 @@ class JourneyProgressService {
                 if idx + 1 < transferTimesSec.count {
                     switchToPhase(.transferWalk(index: idx + 1))
                 } else {
-                    switchToPhase(.finished)
+                    switchToPhase(.onTrain(legIndex: idx + 1))
                 }
             }
         } else if phase == .finished {

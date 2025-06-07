@@ -514,13 +514,15 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
         
         for (index, transitLegInfo) in transitInfos.enumerated() {
-                    let stationToPlatformCard = StationToPlatformCardView()
-                    stationToPlatformCard.tag = stationToPlatformCardTag
-                    if let dep = transitLegInfo.departureStation {
-                        stationToPlatformCard.configure(with: dep)
-                    }
-                    viewsToAdd.append(stationToPlatformCard)
-
+            // Only show station to platform card for the first transit leg
+            if index == 0 {
+                let stationToPlatformCard = StationToPlatformCardView()
+                stationToPlatformCard.tag = stationToPlatformCardTag
+                if let dep = transitLegInfo.departureStation {
+                    stationToPlatformCard.configure(with: dep)
+                }
+                viewsToAdd.append(stationToPlatformCard)
+            }
 
             let catchSectionView = UIStackView()
             catchSectionView.axis = .vertical
@@ -548,7 +550,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             
             // Check for transfer leg and add transfer card if necessary
             if index < transitInfos.count - 1 {
-                viewsToAdd.append(makeCard(title: "🚶‍♀️ Transfer", subtitle: "\(transferTimesSec)")) // Placeholder subtitle
+                viewsToAdd.append(makeCard(title: "🚶‍♀️ Transfer", subtitle: "\(transferTimesSec)"))
              }
              
             viewsToAdd.append(makeTransitCard(info: transitLegInfo, isTransfer: index > 0, legIndex: index))
