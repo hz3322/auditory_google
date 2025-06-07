@@ -16,7 +16,7 @@ class WeatherBannerView: UIView {
     private let conditionLabel: UILabel = {
         let label = UILabel()
         label.font = .systemFont(ofSize: 18, weight: .medium)
-        label.textColor = .white
+        label.textColor = .black
         label.textAlignment = .center
         return label
     }()
@@ -24,6 +24,11 @@ class WeatherBannerView: UIView {
     private var gradientLayer: CAGradientLayer = {
         let layer = CAGradientLayer()
         layer.cornerRadius = 12
+        // Set default light gradient
+        layer.colors = [
+            UIColor(red: 0.85, green: 0.85, blue: 0.87, alpha: 1.0).cgColor,
+            UIColor(red: 0.82, green: 0.82, blue: 0.84, alpha: 1.0).cgColor
+        ]
         return layer
     }()
     
@@ -43,6 +48,12 @@ class WeatherBannerView: UIView {
     private func setupUI() {
         layer.cornerRadius = 12
         clipsToBounds = true
+        
+        // Add a subtle shadow
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+        layer.shadowOpacity = 0.1
+        layer.shadowRadius = 2
         
         layer.addSublayer(gradientLayer)
         addSubview(stackView)
@@ -67,8 +78,11 @@ class WeatherBannerView: UIView {
         // Update text with condition and suggestion in one line
         conditionLabel.text = condition
         
-        // Update gradient
-        gradientLayer.colors = [gradient.start.cgColor, gradient.end.cgColor]
+        // Use light gradient for all conditions
+        gradientLayer.colors = [
+            UIColor(red: 0.85, green: 0.85, blue: 0.87, alpha: 1.0).cgColor,
+            UIColor(red: 0.82, green: 0.82, blue: 0.84, alpha: 1.0).cgColor
+        ]
         
         // Update weather effect
         updateWeatherEffect(for: condition)
