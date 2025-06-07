@@ -1,4 +1,3 @@
-
 import UIKit
 import GooglePlaces
 import CoreLocation
@@ -184,9 +183,6 @@ class CustomAutocompleteViewController: UIViewController {
                     }
                 } else {
                     let history = recentSearches[indexPath.row - 1]
-                    // 你也可以在这里直接 geocode 地址再回调，或直接传 query 让主页面去处理
-                    // 推荐做法：直接模拟Google search回调（如果有地理坐标直接new一个GMSPlace）
-                    // 这里只给demo：回调 query
                     let query = history.query
                     let client = GMSPlacesClient.shared()
                     let token = GMSAutocompleteSessionToken()
@@ -231,15 +227,32 @@ class CustomAutocompleteViewController: UIViewController {
         func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
             if let location = locations.first {
                 currentLocation = location.coordinate
+                // 只更新位置，不自动回调
+                // 让用户手动选择是否使用当前位置
             }
         }
+        
         func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
             print("Location error: \(error.localizedDescription)")
+            // 如果获取位置失败，可以显示一个错误提示
+            let alert = UIAlertController(title: "Location Error", 
+                                        message: "Could not get your current location. Please try again or select a different location.",
+                                        preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            present(alert, animated: true)
         }
+        
         func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
             if manager.authorizationStatus == .authorizedWhenInUse ||
                manager.authorizationStatus == .authorizedAlways {
                 manager.requestLocation()
+            } else if manager.authorizationStatus == .denied {
+                // 如果用户拒绝了位置权限，显示提示
+                let alert = UIAlertController(title: "Location Access Required", 
+                                            message: "Please enable location access in Settings to use this feature.",
+                                            preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                present(alert, animated: true)
             }
         }
     }

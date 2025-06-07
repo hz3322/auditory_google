@@ -170,16 +170,35 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
 
                 switch result {
                 case .success(let places):
-                    self.frequentPlaces = places
+                    if places.isEmpty {
+                        // Initialize with empty Home and Work placeholders and save them to Firestore
+                        let homePlace = SavedPlace(name: "Home", address: "Tap to set", coordinate: CLLocationCoordinate2D())
+                        let workPlace = SavedPlace(name: "Work", address: "Tap to set", coordinate: CLLocationCoordinate2D())
+                        
+                        // Save both places to Firestore
+                        SavedPlacesManager.shared.addOrUpdatePlace(homePlace) { error in
+                            if let error = error {
+                                print("Error saving Home placeholder: \(error.localizedDescription)")
+                            }
+                        }
+                        
+                        SavedPlacesManager.shared.addOrUpdatePlace(workPlace) { error in
+                            if let error = error {
+                                print("Error saving Work placeholder: \(error.localizedDescription)")
+                            }
+                        }
+                        
+                        self.frequentPlaces = [homePlace, workPlace]
+                    } else {
+                        self.frequentPlaces = places
+                    }
                 case .failure(let error):
                     print("Error loading frequent places: \(error.localizedDescription)")
-                    if self.frequentPlaces.isEmpty {
-                        // Initialize with empty Home and Work placeholders
-                        self.frequentPlaces = [
-                            SavedPlace(name: "Home", address: "Tap to set", coordinate: CLLocationCoordinate2D()),
-                            SavedPlace(name: "Work", address: "Tap to set", coordinate: CLLocationCoordinate2D())
-                        ]
-                    }
+                    // Initialize with empty Home and Work placeholders
+                    self.frequentPlaces = [
+                        SavedPlace(name: "Home", address: "Tap to set", coordinate: CLLocationCoordinate2D()),
+                        SavedPlace(name: "Work", address: "Tap to set", coordinate: CLLocationCoordinate2D())
+                    ]
                 }
                 
                 self.populateFrequentPlacesCards()
@@ -596,7 +615,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         // Add "Add More" Button
         addFrequentPlaceButton = UIButton(type: .custom) 
         if #available(iOS 13.0, *) {
-            let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium) // Consistent size
+            let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
             let plusImage = UIImage(systemName: "plus.circle.fill", withConfiguration: config)
             addFrequentPlaceButton.setImage(plusImage, for: .normal)
         } else {
@@ -605,23 +624,31 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
         addFrequentPlaceButton.tintColor = AppColors.accentBlue
         addFrequentPlaceButton.addTarget(self, action: #selector(addNewFrequentPlaceTapped), for: .touchUpInside)
+        addFrequentPlaceButton.translatesAutoresizingMaskIntoConstraints = false
         
-        let addButtonCard = UIView() // Simple container, no card styling for the button itself
-        addButtonCard.backgroundColor = .clear
-        addButtonCard.addSubview(addFrequentPlaceButton)
-        addButtonCard.translatesAutoresizingMaskIntoConstraints = false
+        // Create a container view for the button
+        let addButtonContainer = UIView()
+        addButtonContainer.backgroundColor = AppColors.cardBackground
+        addButtonContainer.layer.cornerRadius = 16
+        addButtonContainer.layer.shadowColor = AppColors.shadowColor.cgColor
+        addButtonContainer.layer.shadowOffset = CGSize(width: 0, height: 3)
+        addButtonContainer.layer.shadowRadius = 8
+        addButtonContainer.layer.shadowOpacity = 0.07
+        addButtonContainer.translatesAutoresizingMaskIntoConstraints = false
+        
+        addButtonContainer.addSubview(addFrequentPlaceButton)
         
         NSLayoutConstraint.activate([
-            addFrequentPlaceButton.centerXAnchor.constraint(equalTo: addButtonCard.centerXAnchor),
-            addFrequentPlaceButton.centerYAnchor.constraint(equalTo: addButtonCard.centerYAnchor),
-            // Constraints for the button itself to control tap area
+            addButtonContainer.widthAnchor.constraint(equalToConstant: 110),
+            addButtonContainer.heightAnchor.constraint(equalToConstant: 60),
+            
+            addFrequentPlaceButton.centerXAnchor.constraint(equalTo: addButtonContainer.centerXAnchor),
+            addFrequentPlaceButton.centerYAnchor.constraint(equalTo: addButtonContainer.centerYAnchor),
             addFrequentPlaceButton.widthAnchor.constraint(equalToConstant: 44),
-            addFrequentPlaceButton.heightAnchor.constraint(equalToConstant: 44),
-            // Constraints for the container card
-            addButtonCard.widthAnchor.constraint(equalToConstant: 50), // Width of the container
-            addButtonCard.heightAnchor.constraint(equalToConstant: 60)  // Height of the container (matches cards)
+            addFrequentPlaceButton.heightAnchor.constraint(equalToConstant: 44)
         ])
-        frequentPlacesStack.addArrangedSubview(addButtonCard)
+        
+        frequentPlacesStack.addArrangedSubview(addButtonContainer)
     }
 
     private func createFrequentPlaceCard(savedPlace: SavedPlace) -> UIView {
