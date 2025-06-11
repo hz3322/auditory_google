@@ -5,8 +5,8 @@ import UIKit
 
 /// Handles the core route fetching and processing logic.
 /// Acts as a singleton for easy access throughout the app.
-public final class RouteLogic {
-    static let shared = RouteLogic()
+public final class RouteService {
+    static let shared = RouteService()
     private init() {}
     
     // MARK: - Properties

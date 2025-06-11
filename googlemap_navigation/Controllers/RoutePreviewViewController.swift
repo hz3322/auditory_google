@@ -161,7 +161,7 @@ class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     private func fetchRoute(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) {
         let userLocation = CLLocation(latitude: from.latitude, longitude: from.longitude)
 
-        RouteLogic.shared.fetchRoute(
+        RouteService.shared.fetchRoute(
             from: userLocation,
             to: to
         ) { [weak self] walkSteps, transitSegments, totalTime, routeSteps, walkToStationMin, walkToDestinationMin in
