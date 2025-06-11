@@ -125,6 +125,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         super.viewDidLoad()
         setupUI()
         setupLocationManager()
+        setupStatusButton() // Add this line
         
         self.title = "Journey Summary"
         navigationController?.navigationBar.tintColor = AppColors.accentBlue
@@ -505,6 +506,9 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             pacingManager?.distanceToStation = userOriginLocation.distance(from: stationLocation)
         }
         pacingManager?.timeToDeparture = nextTrainArrivalDate.timeIntervalSince(Date())
+        
+        // Set weather speed factor
+        pacingManager?.updateWeatherFactor(weatherSpeedFactor)
         
         // Handle speed updates
         pacingManager?.onSpeedUpdate = { [weak self] currentSpeed, targetSpeed in
@@ -1452,7 +1456,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             }
         }
         
-        // Rest of the existing calculation logic...
         let normalizedName = StationNameUtils.normalizeStationName(stationName)
         var stationCoord = stationCoordinates[normalizedName]
         
@@ -1482,9 +1485,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                                        longitude: stationCoord.longitude)
         let distanceToStation = userLocation.distance(from: stationLocation)
         
-        let baseWalkingSpeed: Double = 1.2
-        let adjustedWalkingSpeed = baseWalkingSpeed * weatherSpeedFactor
-        let estimatedWalkTime = distanceToStation / adjustedWalkingSpeed
+        let baseWalkingSpeed: Double = 1.2 // m/s
+        let estimatedWalkTime = distanceToStation / baseWalkingSpeed
         
         // Cache the result
         estimatedTimeCache[stationName] = estimatedWalkTime
@@ -1524,6 +1526,194 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
                 self.progressBarBackground.layoutIfNeeded()
             }
         }
+    }
+
+    // Add these properties at the top of the class
+    private var statusButton: UIButton!
+    private var lineStatuses: [String: TfLLineStatus] = [:]
+    private var statusPopoverVC: UIViewController?
+
+    // Add this method after setupUI()
+    private func setupStatusButton() {
+        statusButton = UIButton(type: .system)
+        statusButton.setImage(UIImage(systemName: "exclamationmark.circle.fill"), for: .normal)
+        statusButton.tintColor = .systemBlue
+        statusButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(statusButton)
+        
+        NSLayoutConstraint.activate([
+            statusButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            statusButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+            statusButton.widthAnchor.constraint(equalToConstant: 44),
+            statusButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+        
+        statusButton.addTarget(self, action: #selector(statusButtonTapped), for: .touchUpInside)
+        
+        // Add initial state check
+        Task {
+            do {
+                lineStatuses = try await TfLDataService.shared.fetchAllLineStatuses()
+                await MainActor.run {
+                    updateStatusButtonAppearance()
+                }
+            } catch {
+                print("Error fetching initial line statuses: \(error)")
+            }
+        }
+    }
+    
+    private func updateStatusButtonAppearance() {
+        // Check if any line has severe status
+        let hasSevereStatus = lineStatuses.values.contains { status in
+            status.lineStatuses.contains { $0.statusSeverity > 5 }
+        }
+        
+        // Update button appearance
+        statusButton.tintColor = hasSevereStatus ? .systemRed : .systemBlue
+        statusButton.alpha = hasSevereStatus ? 1.0 : 0.6
+    }
+
+    @objc private func statusButtonTapped() {
+        Task {
+            do {
+                // 获取所有线路状态
+                lineStatuses = try await TfLDataService.shared.fetchAllLineStatuses()
+                
+                // 在主线程更新 UI
+                await MainActor.run {
+                    updateStatusButtonAppearance()
+                    showStatusPopover()
+                }
+            } catch {
+                print("Error fetching line statuses: \(error)")
+                // 可以在这里添加错误提示
+            }
+        }
+    }
+
+    private func showStatusPopover() {
+        // 移除现有的弹窗
+        statusPopoverVC?.dismiss(animated: false)
+        
+        // 创建新的弹窗视图
+        let popoverVC = UIViewController()
+        popoverVC.modalPresentationStyle = .popover
+        popoverVC.preferredContentSize = CGSize(width: 300, height: 400)
+        popoverVC.view.backgroundColor = .systemBackground
+        
+        let scrollView = UIScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        popoverVC.view.addSubview(scrollView)
+        
+        let stackView = UIStackView()
+        stackView.axis = .vertical
+        stackView.spacing = 12
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(stackView)
+        
+        // 添加标题
+        let titleLabel = UILabel()
+        titleLabel.text = "Line Status"
+        titleLabel.font = .boldSystemFont(ofSize: 18)
+        titleLabel.textAlignment = .center
+        titleLabel.textColor = .label
+        stackView.addArrangedSubview(titleLabel)
+        
+        // 添加分隔线
+        let separator = UIView()
+        separator.backgroundColor = .separator
+        separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        stackView.addArrangedSubview(separator)
+        
+        // 添加每个线路的状态
+        for (lineId, status) in lineStatuses.sorted(by: { $0.key < $1.key }) {
+            let lineView = createLineStatusView(lineId: lineId, status: status)
+            stackView.addArrangedSubview(lineView)
+        }
+        
+        // 设置约束
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: popoverVC.view.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: popoverVC.view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: popoverVC.view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: popoverVC.view.bottomAnchor),
+            
+            stackView.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 16),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -16),
+            stackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -32)
+        ])
+        
+        // 设置弹窗位置
+        if let popover = popoverVC.popoverPresentationController {
+            popover.sourceView = statusButton
+            popover.sourceRect = statusButton.bounds
+            popover.permittedArrowDirections = [.up]
+        }
+        
+        statusPopoverVC = popoverVC
+        present(popoverVC, animated: true)
+    }
+
+    private func createLineStatusView(lineId: String, status: TfLLineStatus) -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = .secondarySystemBackground
+        container.layer.cornerRadius = 8
+        
+        let lineNameLabel = UILabel()
+        lineNameLabel.text = status.name
+        lineNameLabel.font = .boldSystemFont(ofSize: 16)
+        lineNameLabel.textColor = TfLColorUtils.color(forLineId: lineId)
+        
+        let statusLabel = UILabel()
+        statusLabel.numberOfLines = 0
+        
+        // 获取最严重的状态
+        if let mostSevereStatus = status.lineStatuses.max(by: { $0.statusSeverity < $1.statusSeverity }) {
+            let statusText = mostSevereStatus.statusSeverityDescription
+            let reasonText = mostSevereStatus.reason ?? ""
+            let disruptionText = mostSevereStatus.disruption?.description ?? ""
+            
+            var fullText = statusText
+            if !reasonText.isEmpty {
+                fullText += "\nReason: \(reasonText)"
+            }
+            if !disruptionText.isEmpty {
+                fullText += "\nDisruption: \(disruptionText)"
+            }
+            
+            statusLabel.text = fullText
+            statusLabel.font = .systemFont(ofSize: 14)
+            statusLabel.textColor = mostSevereStatus.statusSeverity > 5 ? .systemRed : .label
+        }
+        
+        let stackView = UIStackView(arrangedSubviews: [lineNameLabel, statusLabel])
+        stackView.axis = .vertical
+        stackView.spacing = 4
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stackView)
+        
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
+        ])
+        
+        return container
+    }
+
+    // MARK: - Weather Updates
+    
+    func updateWeatherInfo(condition: String, speedFactor: Double) {
+        self.currentWeather = condition
+        self.weatherSpeedFactor = speedFactor
+        
+        // Update PacingManager with new weather factor
+        pacingManager?.updateWeatherFactor(speedFactor)
     }
 }
 

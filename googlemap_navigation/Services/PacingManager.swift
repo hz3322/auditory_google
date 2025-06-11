@@ -12,6 +12,7 @@ class PacingManager: NSObject {
     // Station information
     var distanceToStation: CLLocationDistance = 0      // in meters
     var timeToDeparture: TimeInterval = 0              // in seconds
+    var googleEstimatedTime: TimeInterval = 0          // Google's ETA in seconds
     
     // Speed deviation threshold (percentage)
     private let speedDeviationThreshold: Double = 0.1  // Trigger alert when deviation exceeds 10%
@@ -25,10 +26,57 @@ class PacingManager: NSObject {
     var onSpeedUpdate: ((Double, Double) -> Void)? // (currentSpeed, targetSpeed)
     var onArrivalTimeUpdate: ((TimeInterval) -> Void)? // Updated arrival time
     
+    // Motion tracking
+    private var currentMotionSpeed: Double = 0.0
+    private var isUsingMotionData: Bool = false
+    
+    // Walking statistics
+    private var walkingStartTime: Date?
+    private var walkingStats: WalkingStats?
+    
+    // User speed profile
+    private struct UserSpeedProfile {
+        var averageSpeed: Double = 0.0
+        var speedHistory: [Double] = []
+        var lastUpdated: Date = Date()
+        
+        // Weather conditions
+        var weatherSpeedFactor: Double = 1.0
+        
+        
+        mutating func updateSpeed(_ newSpeed: Double) {
+            speedHistory.append(newSpeed)
+            // Keep only last 100 measurements
+            if speedHistory.count > 100 {
+                speedHistory.removeFirst()
+            }
+            averageSpeed = speedHistory.reduce(0, +) / Double(speedHistory.count)
+            lastUpdated = Date()
+        }
+        
+        func getAdjustedSpeed() -> Double {
+            let baseSpeed = averageSpeed
+            return baseSpeed * weatherSpeedFactor
+        }
+    }
+    
+    private var userSpeedProfile = UserSpeedProfile()
+    
+    // MARK: - Walking Statistics
+    struct WalkingStats {
+        var averageSpeed: Double = 0.0      // meters per second
+        var maxSpeed: Double = 0.0          // meters per second
+        var minSpeed: Double = Double.infinity  // meters per second
+        var totalDistance: Double = 0.0     // meters
+        var duration: TimeInterval = 0.0    // seconds
+        var speedHistory: [Double] = []     // Array of speed measurements
+    }
+    
     override init() {
         super.init()
         setupAudioSession()
         setupTickSound()
+        setupMotionTracking()
     }
     
     private func setupAudioSession() {
@@ -54,6 +102,26 @@ class PacingManager: NSObject {
         }
     }
     
+    private func setupMotionTracking() {
+        MotionManager.shared.onSpeedUpdate = { [weak self] speed in
+            self?.currentMotionSpeed = speed
+            self?.isUsingMotionData = true
+            
+            // Update walking statistics
+            if var stats = self?.walkingStats {
+                stats.speedHistory.append(speed)
+                if speed > stats.maxSpeed {
+                    stats.maxSpeed = speed
+                }
+                if speed < stats.minSpeed {
+                    stats.minSpeed = speed
+                }
+                self?.walkingStats = stats
+            }
+        }
+        MotionManager.shared.startTracking()
+    }
+    
     func updateWithNewLocation(_ location: CLLocation) {
         // Check if location change is significant enough
         if let lastLocation = lastLocation {
@@ -67,11 +135,32 @@ class PacingManager: NSObject {
         lastLocation = location
         
         // Get current speed (m/s)
-        let vNow = max(location.speed, 0.5) // Ensure speed is not negative and at least 0.5 m/s
+        var vNow: Double
         
-        // Calculate target speed
+        if isUsingMotionData && currentMotionSpeed > 0 {
+            // Use motion data if available and valid
+            vNow = currentMotionSpeed
+            // Update user's speed profile
+            userSpeedProfile.updateSpeed(vNow)
+        } else {
+            // Fallback to GPS speed
+            vNow = max(location.speed, 0.5) // Ensure speed is not negative and at least 0.5 m/s
+        }
+        
+        // Calculate target speed using adaptive ETA
         guard timeToDeparture > 0 else { return }
-        let vTarget = distanceToStation / timeToDeparture
+        
+        // Get adjusted speed based on user's profile
+        let adjustedSpeed = userSpeedProfile.getAdjustedSpeed()
+        
+        // Calculate adaptive ETA
+        let adaptiveETA = calculateAdaptiveETA(
+            distance: distanceToStation,
+            googleETA: googleEstimatedTime,
+            userSpeed: adjustedSpeed
+        )
+        
+        let vTarget = distanceToStation / adaptiveETA
         
         // Calculate new arrival time
         let newArrivalTime = distanceToStation / vNow
@@ -106,6 +195,29 @@ class PacingManager: NSObject {
         }
     }
     
+    private func calculateAdaptiveETA(distance: CLLocationDistance, googleETA: TimeInterval, userSpeed: Double) -> TimeInterval {
+        // Calculate ETA based on user's speed
+        let userBasedETA = distance / userSpeed
+        
+        // Weight factors (can be adjusted based on data analysis)
+        let googleWeight: Double = 0.3  // Trust Google's ETA less
+        let userWeight: Double = 0.7    // Trust user's speed more
+        
+        // Calculate weighted average
+        let adaptiveETA = (googleETA * googleWeight) + (userBasedETA * userWeight)
+        
+        // Ensure ETA is not too optimistic or pessimistic
+        let minETA = max(googleETA * 0.8, userBasedETA * 0.8)  // Not too optimistic
+        let maxETA = min(googleETA * 1.2, userBasedETA * 1.2)  // Not too pessimistic
+        
+        return min(max(adaptiveETA, minETA), maxETA)
+    }
+    
+    // Update weather factor
+    func updateWeatherFactor(_ factor: Double) {
+        userSpeedProfile.weatherSpeedFactor = factor
+    }
+    
     private func startPacing(forSpeedRatio ratio: Double) {
         // Determine alert frequency based on speed ratio
         // ratio > 1 means too fast, need to slow down
@@ -127,6 +239,57 @@ class PacingManager: NSObject {
     func stopPacing() {
         metronomeTimer?.invalidate()
         metronomeTimer = nil
+        MotionManager.shared.stopTracking()
+    }
+    
+    func startWalkingTracking() {
+        walkingStartTime = Date()
+        walkingStats = WalkingStats()
+        MotionManager.shared.startTracking()
+    }
+    
+    func stopWalkingTracking() -> WalkingStats? {
+        guard let startTime = walkingStartTime else { return nil }
+        
+        // Get final statistics
+        MotionManager.shared.getAverageSpeed(from: startTime, to: Date()) { [weak self] averageSpeed in
+            if let stats = self?.walkingStats, let avgSpeed = averageSpeed {
+                var finalStats = stats
+                finalStats.averageSpeed = avgSpeed
+                finalStats.duration = Date().timeIntervalSince(startTime)
+                
+                // Calculate additional metrics
+                if !finalStats.speedHistory.isEmpty {
+                    finalStats.maxSpeed = finalStats.speedHistory.max() ?? 0
+                    finalStats.minSpeed = finalStats.speedHistory.min() ?? 0
+                }
+                
+                // Notify about completion
+                self?.notifyWalkingStatsUpdated(finalStats)
+            }
+        }
+        
+        MotionManager.shared.stopTracking()
+        walkingStartTime = nil
+        return walkingStats
+    }
+    
+    private func notifyWalkingStatsUpdated(_ stats: WalkingStats) {
+        // Convert to more readable format
+        let avgSpeedKmh = stats.averageSpeed * 3.6  // Convert m/s to km/h
+        let maxSpeedKmh = stats.maxSpeed * 3.6
+        let minSpeedKmh = stats.minSpeed * 3.6
+        let distanceKm = stats.totalDistance / 1000  // Convert meters to kilometers
+        let durationMinutes = stats.duration / 60    // Convert seconds to minutes
+        
+        print("""
+        📊 Walking Statistics:
+        - Average Speed: \(String(format: "%.1f", avgSpeedKmh)) km/h
+        - Max Speed: \(String(format: "%.1f", maxSpeedKmh)) km/h
+        - Min Speed: \(String(format: "%.1f", minSpeedKmh)) km/h
+        - Total Distance: \(String(format: "%.2f", distanceKm)) km
+        - Duration: \(String(format: "%.1f", durationMinutes)) minutes
+        """)
     }
     
     deinit {

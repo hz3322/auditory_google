@@ -822,9 +822,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         ])
         
         // Animate the swipe
-        UIView.animate(withDuration: 0.3, animations: {
+        UIView.animate(withDuration: 0.3) {
             cardView.transform = CGAffineTransform(translationX: -80, y: 0)
-        }) { _ in
+        } completion: { _ in
             // Show confirmation alert
             let alert = UIAlertController(title: "Delete \"\(placeToRemove.name)\"",
                                         message: "Are you sure you want to delete this frequent place?",
@@ -839,7 +839,17 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                             self?.showErrorAlert(message: "Could not delete \(placeToRemove.name). Please try again.")
                         } else {
                             print("✅ Frequent place '\(placeToRemove.name)' deleted.")
-                            self?.refreshFrequentPlacesUI()
+                            // If Home or Work was deleted, create a new placeholder
+                            if placeToRemove.name == "Home" || placeToRemove.name == "Work" {
+                                let newPlace = SavedPlace(name: placeToRemove.name,
+                                                        address: "Tap to set",
+                                                        coordinate: CLLocationCoordinate2D())
+                                SavedPlacesManager.shared.addOrUpdatePlace(newPlace) { _ in
+                                    self?.refreshFrequentPlacesUI()
+                                }
+                            } else {
+                                self?.refreshFrequentPlacesUI()
+                            }
                         }
                     }
                 }

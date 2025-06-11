@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import GoogleMaps
+import UIKit
 
 /// Handles the core route fetching and processing logic.
 /// Acts as a singleton for easy access throughout the app.
@@ -20,6 +21,7 @@ public final class RouteLogic {
     func fetchRoute(
         from userLocation: CLLocation,
         to destinationCoord: CLLocationCoordinate2D,
+        viewController: UIViewController? = nil,
         completion: @escaping (
             _ walkSteps: [WalkStep],
             _ transitSegments: [TransitInfo],
@@ -39,9 +41,12 @@ public final class RouteLogic {
             // First fetch weather to get speed factor
             WeatherService.shared.fetchCurrentWeather(at: userLocation.coordinate) { condition, suggestion, gradient in
                 // Get the speed factor from the weather condition
-                var speedFactor = WeatherCondition.from(weatherId: 800).speedFactor // Default to clear weather
-                if let weatherCondition = WeatherCondition(rawValue: condition) {
-                    speedFactor = weatherCondition.speedFactor
+                let weatherCondition = WeatherCondition.from(weatherId: 800) // Default to clear weather
+                let speedFactor = weatherCondition.speedFactor
+                
+                // Update the summary view controller with weather info
+                if let summaryVC = viewController as? RouteSummaryViewController {
+                    summaryVC.updateWeatherInfo(condition: condition, speedFactor: speedFactor)
                 }
                 
                 GoogleMapsService.shared.fetchTransitRoute(

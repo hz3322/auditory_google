@@ -27,5 +27,7 @@
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>We need microphone access to provide audio feedback for your walking pace.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>We need motion data to accurately track your walking speed and provide better pacing guidance.</string>
 </dict>
 </plist>

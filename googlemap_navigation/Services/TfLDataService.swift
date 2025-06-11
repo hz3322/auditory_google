@@ -88,6 +88,39 @@ struct StationMeta {
     let coord: CLLocationCoordinate2D
 }
 
+// MARK: - Line Status Models
+struct TfLLineStatus: Decodable {
+    let id: String
+    let name: String
+    let lineStatuses: [LineStatus]
+    let created: Date
+    let modified: Date
+    
+    struct LineStatus: Decodable {
+        let id: Int
+        let statusSeverity: Int
+        let statusSeverityDescription: String
+        let reason: String?
+        let validityPeriods: [ValidityPeriod]
+        let disruption: Disruption?
+        
+        struct ValidityPeriod: Decodable {
+            let fromDate: Date
+            let toDate: Date
+            let isNow: Bool
+        }
+        
+        struct Disruption: Decodable {
+            let category: String
+            let categoryDescription: String
+            let description: String
+            let affectedRoutes: [String]?
+            let affectedStops: [String]?
+            let closureText: String?
+        }
+    }
+}
+
 // MARK: - Data Service Singleton
 
 /// Centralized TfL API data handler for stations, lines, and arrivals
@@ -493,6 +526,114 @@ public final class TfLDataService {
     // Add a public method to get station ID
     func getStationId(for stationName: String) -> String? {
         return stationIdMap[stationName]
+    }
+
+    // MARK: - Line Status
+    func fetchLineStatus(lineId: String) async throws -> TfLLineStatus {
+        print("[TfLDataService] Fetching status for line: \(lineId)")
+        
+        let urlStr = "\(baseURL)/Line/\(lineId)/Status"
+        guard let url = URL(string: urlStr) else {
+            throw TfLError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.addValue(apiKey, forHTTPHeaderField: "app_key")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw TfLError.invalidResponse
+        }
+        
+        print("[TfLDataService] Line status response status: \(httpResponse.statusCode)")
+        
+        guard httpResponse.statusCode == 200 else {
+            throw TfLError.serverError(statusCode: httpResponse.statusCode)
+        }
+        
+        let decoder = JSONDecoder()
+        
+        // 创建一个自定义的日期解码策略
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        
+        // 尝试多种日期格式
+        let dateDecodingStrategy = JSONDecoder.DateDecodingStrategy.custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateString = try container.decode(String.self)
+            
+            // 尝试 ISO8601 格式
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = isoFormatter.date(from: dateString) {
+                return date
+            }
+            
+            // 尝试带时区的格式
+            dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+            if let date = dateFormatter.date(from: dateString) {
+                return date
+            }
+            
+            // 尝试不带时区的格式
+            dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+            if let date = dateFormatter.date(from: dateString) {
+                return date
+            }
+            
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Cannot decode date string \(dateString)"
+            )
+        }
+        
+        decoder.dateDecodingStrategy = dateDecodingStrategy
+        
+        let status = try decoder.decode([TfLLineStatus].self, from: data).first
+        guard let lineStatus = status else {
+            throw TfLError.noData
+        }
+        
+        print("[TfLDataService] Successfully fetched status for line: \(lineId)")
+        return lineStatus
+    }
+
+    // 获取所有线路的状态
+    func fetchAllLineStatuses() async throws -> [String: TfLLineStatus] {
+        let lineIds = [
+            "bakerloo", "central", "circle", "district",
+            "hammersmith-city", "jubilee", "metropolitan",
+            "northern", "piccadilly", "victoria", "waterloo-city",
+            "london-overground", "elizabeth", "dlr", "tram"
+        ]
+        
+        var statuses: [String: TfLLineStatus] = [:]
+        
+        for lineId in lineIds {
+            do {
+                let status = try await fetchLineStatus(lineId: lineId)
+                statuses[lineId] = status
+                print("[DEBUG] Line Status for \(lineId):")
+                print("  - Name: \(status.name)")
+                print("  - Statuses:")
+                for lineStatus in status.lineStatuses {
+                    print("    * Severity: \(lineStatus.statusSeverity)")
+                    print("    * Description: \(lineStatus.statusSeverityDescription)")
+                    if let reason = lineStatus.reason {
+                        print("    * Reason: \(reason)")
+                    }
+                }
+                print("  - Created: \(status.created)")
+                print("  - Modified: \(status.modified)")
+                print("-------------------")
+            } catch {
+                print("[TfLDataService] Error fetching status for line \(lineId): \(error)")
+            }
+        }
+        
+        return statuses
     }
 
 }
