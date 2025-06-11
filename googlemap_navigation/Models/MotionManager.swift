@@ -9,6 +9,9 @@ class MotionManager {
         return CMPedometer.isPedometerEventTrackingAvailable() && CMPedometer.isDistanceAvailable()
     }
     
+    // Current speed in meters per second
+    private(set) var currentSpeed: Double = 0.0
+    
     // Callback for speed updates
     var onSpeedUpdate: ((Double) -> Void)?
     
@@ -28,9 +31,10 @@ class MotionManager {
             }
             
             // Calculate current speed (m/s)
-            if let currentSpeed = data.currentPace {
+            if let currentPace = data.currentPace {
                 // currentPace is in seconds per meter, so we need to convert to meters per second
-                let speedInMetersPerSecond = 1.0 / currentSpeed.doubleValue
+                let speedInMetersPerSecond = 1.0 / currentPace.doubleValue
+                self?.currentSpeed = speedInMetersPerSecond
                 self?.onSpeedUpdate?(speedInMetersPerSecond)
             }
         }
@@ -38,6 +42,7 @@ class MotionManager {
     
     func stopTracking() {
         pedometer.stopUpdates()
+        currentSpeed = 0.0
     }
     
     // Get average speed over a time period

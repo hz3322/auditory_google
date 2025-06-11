@@ -1390,33 +1390,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     // You can re-add it if you have a clear way to determine the active timeline and card.
 
     private func setupMovingDot(attachedTo timeline: TimelineView, in card: UIView) {
-        guard let startRefLabel = card.viewWithTag(timelineStartLabelTag) as? UILabel else {
-            print("Error: Start reference label (tag \(timelineStartLabelTag)) not found in card for moving dot.")
-            return
-        }
-        
-        movingDot.removeFromSuperview() // Remove existing if any before adding
-        movingDot.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.9)
-        movingDot.layer.cornerRadius = 7 // Make it slightly larger than timeline line width
-        movingDot.layer.borderWidth = 1.5
-        movingDot.layer.borderColor = UIColor.white.withAlphaComponent(0.95).cgColor
-        movingDot.translatesAutoresizingMaskIntoConstraints = false
-        timeline.addSubview(movingDot)
-        
-        // Initial Y position based on the start reference label for this timeline
-        let initialYPositionInTimeline = startRefLabel.convert(CGPoint(x: 0, y: startRefLabel.bounds.midY), to: timeline).y
-                                        
-        dotCenterYConstraint?.isActive = false // Deactivate old one
-        dotCenterYConstraint = movingDot.centerYAnchor.constraint(equalTo: timeline.topAnchor, constant: initialYPositionInTimeline)
-        
-        NSLayoutConstraint.activate([
-            movingDot.centerXAnchor.constraint(equalTo: timeline.centerXAnchor),
-            movingDot.widthAnchor.constraint(equalToConstant: 14),
-            movingDot.heightAnchor.constraint(equalToConstant: 14),
-            dotCenterYConstraint!
-        ])
-        movingDot.alpha = 0 // Start hidden
-        UIView.animate(withDuration: 0.3, delay: 0.1) { self.movingDot.alpha = 1 } // Fade in
+        // Remove this entire function
     }
 
     private func loadStationCoordinates(completion: @escaping () -> Void) {
@@ -1780,23 +1754,12 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
         } else { 
             statusDescription = "\(currentCatchStatus.displayText) by \(timeText)"
         }
-        let fullText = "\(statusDescription) (\(uncertaintyText))"
-        let attributedString = NSMutableAttributedString(string: fullText)
-        attributedString.addAttribute(.foregroundColor, value: currentCatchStatus.displayColor, range: NSRange(location: 0, length: attributedString.length))
-        if let iconName = currentCatchStatus.systemIconName, let iconImage = UIImage(systemName: iconName) {
-            let imageAttachment = NSTextAttachment()
-            let tintedImage = iconImage.withTintColor(currentCatchStatus.displayColor, renderingMode: .alwaysOriginal)
-            imageAttachment.image = tintedImage
-            let imageSize = deltaTimeLabel.font.pointSize * 0.95
-            let fontDescender = deltaTimeLabel.font.descender
-            imageAttachment.bounds = CGRect(x: 0, y: fontDescender + (deltaTimeLabel.font.lineHeight - imageSize) / 2 - fontDescender, width: imageSize, height: imageSize)
-            let imageAttrString = NSAttributedString(attachment: imageAttachment)
-            attributedString.insert(imageAttrString, at: 0)
-            attributedString.insert(NSAttributedString(string: " "), at: 1)
-        }
-        deltaTimeLabel.attributedText = attributedString
         
-        // --- 5. Haptic Feedback for Significant Status Changes ---
+        // --- 5. Update Delta Time Label ---
+        deltaTimeLabel.text = statusDescription
+        deltaTimeLabel.textColor = currentCatchStatus.displayColor
+        
+        // --- 6. Haptic Feedback for Status Changes ---
         if let previousStatus = previousCatchStatus, previousStatus != currentCatchStatus {
             let improvement = (previousStatus == .tough && (currentCatchStatus == .hurry || currentCatchStatus == .easy)) ||
                               (previousStatus == .hurry && currentCatchStatus == .easy)
@@ -1810,41 +1773,6 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
             }
         }
         self.previousCatchStatus = currentCatchStatus
-
-        // --- 6. Update Moving Dot on Active Transit Card's Timeline ---
-        if case .onTrain(let legIndex) = phase, legIndex == self.currentActiveTransitLegIndex {
-            if let activeCard = self.activeJourneySegmentCard,
-               let timelineView = activeCard.viewWithTag(timelineViewTag) as? TimelineView,
-               let startRefLabel = activeCard.viewWithTag(timelineStartLabelTag) as? UILabel,
-               let endRefLabel = activeCard.viewWithTag(timelineEndLabelTag) as? UILabel {
-
-                // Ensure movingDot is correctly parented and its Y constraint is accessible
-                if self.movingDot.superview != timelineView {
-                    print("[ProgressUpdate] Moving dot was not on the correct timeline. Re-setting for leg \(legIndex).")
-                    self.setupMovingDot(attachedTo: timelineView, in: activeCard)
-                }
-                
-                // Calculate Y position for the movingDot on the timeline
-                let startYInTimeline = startRefLabel.convert(CGPoint(x: 0, y: startRefLabel.bounds.midY), to: timelineView).y
-                let endYInTimeline = endRefLabel.convert(CGPoint(x: 0, y: endRefLabel.bounds.midY), to: timelineView).y
-                let travelDistanceOnTimeline = endYInTimeline - startYInTimeline
-                
-                if travelDistanceOnTimeline > 0 { // Avoid division by zero or negative travel
-                    let clampedPhaseProgress = min(max(phaseProgress, 0), 1)
-                    let dotYPosition = startYInTimeline + (travelDistanceOnTimeline * CGFloat(clampedPhaseProgress))
-                    
-                    self.dotCenterYConstraint?.constant = dotYPosition
-                    
-                    if timelineView.window != nil {
-                        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveLinear, .beginFromCurrentState], animations: {
-                            timelineView.layoutIfNeeded()
-                        })
-                    } else {
-                        timelineView.layoutIfNeeded()
-                    }
-                }
-            }
-        }
     }
     
     func journeyPhaseDidChange(_ phase: ProgressPhase) {
@@ -1873,12 +1801,11 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
         }
         self.activeJourneySegmentCard = nil
         self.currentActiveTransitLegIndex = nil
-        self.movingDot.removeFromSuperview()
 
         var newActiveCardView: UIView? = nil
         var legIndexOfNewActiveTrainCard: Int? = nil
 
-        // 2. Determine and highlight new active card & setup moving dot
+        // 2. Determine and highlight new active card
         switch phase {
         case .walkToStation:
             self.hasReachedStationVisualCue = false
@@ -1902,11 +1829,6 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
             legIndexOfNewActiveTrainCard = legIndex
             if let card = stackView.arrangedSubviews.first(where: { $0.tag == transitCardBaseTag + legIndex }) {
                 newActiveCardView = card
-                if let timelineView = card.viewWithTag(timelineViewTag) as? TimelineView {
-                    setupMovingDot(attachedTo: timelineView, in: card)
-                } else {
-                    print("Error: Could not find TimelineView (tag \(timelineViewTag)) in active train card for leg \(legIndex)")
-                }
             } else {
                 print("Error: Could not find active train card for leg \(legIndex) with tag \(transitCardBaseTag + legIndex)")
             }
@@ -1927,7 +1849,6 @@ extension RouteSummaryViewController: JourneyProgressDelegate {
 
         case .finished:
             stopLocationUpdates()
-            self.movingDot.removeFromSuperview()
         }
 
         // 3. Apply highlight to the new active card (if any)
