@@ -14,6 +14,9 @@ class PacingManager: NSObject {
     var timeToDeparture: TimeInterval = 0              // in seconds
     var googleEstimatedTime: TimeInterval = 0          // Google's ETA in seconds
     
+    // Location tracking
+    var userOriginLocation: CLLocation?                // 用户起始位置
+    
     // Speed deviation threshold (percentage)
     private let speedDeviationThreshold: Double = 0.1  // Trigger alert when deviation exceeds 10%
     private var isCurrentlyPacing: Bool = false        // Current pacing state
@@ -39,10 +42,8 @@ class PacingManager: NSObject {
         var averageSpeed: Double = 0.0
         var speedHistory: [Double] = []
         var lastUpdated: Date = Date()
-        
-        // Weather conditions
         var weatherSpeedFactor: Double = 1.0
-        
+        var walkingRecords: [WalkingRecord] = []
         
         mutating func updateSpeed(_ newSpeed: Double) {
             speedHistory.append(newSpeed)
@@ -58,6 +59,30 @@ class PacingManager: NSObject {
             let baseSpeed = averageSpeed
             return baseSpeed * weatherSpeedFactor
         }
+        
+        // Save walking records to UserDefaults
+        func saveWalkingRecords() {
+            let encoder = JSONEncoder()
+            if let encoded = try? encoder.encode(walkingRecords) {
+                UserDefaults.standard.set(encoded, forKey: "walkingRecords")
+            }
+        }
+        
+        // Load walking records from UserDefaults
+        static func loadWalkingRecords() -> [WalkingRecord] {
+            if let data = UserDefaults.standard.data(forKey: "walkingRecords"),
+               let records = try? JSONDecoder().decode([WalkingRecord].self, from: data) {
+                return records
+            }
+            return []
+        }
+        
+        // Calculate average speed from walking records
+        static func calculateAverageSpeed(from records: [WalkingRecord]) -> Double {
+            guard !records.isEmpty else { return 0.0 }
+            let totalSpeed = records.reduce(0.0) { $0 + $1.speed }
+            return totalSpeed / Double(records.count)
+        }
     }
     
     private var userSpeedProfile = UserSpeedProfile()
@@ -72,11 +97,28 @@ class PacingManager: NSObject {
         var speedHistory: [Double] = []     // Array of speed measurements
     }
     
+    // MARK: - Walking Record Model
+    struct WalkingRecord: Codable {
+        let distance: Double          // in meters
+        let duration: TimeInterval    // in seconds
+        let date: Date
+        let weatherCondition: String
+        let weatherSpeedFactor: Double
+        
+        var speed: Double {
+            return distance / duration
+        }
+    }
+    
     override init() {
         super.init()
         setupAudioSession()
         setupTickSound()
         setupMotionTracking()
+        
+        // Load walking records and initialize average speed
+        userSpeedProfile.walkingRecords = UserSpeedProfile.loadWalkingRecords()
+        userSpeedProfile.averageSpeed = UserSpeedProfile.calculateAverageSpeed(from: userSpeedProfile.walkingRecords)
     }
     
     private func setupAudioSession() {
@@ -123,6 +165,11 @@ class PacingManager: NSObject {
     }
     
     func updateWithNewLocation(_ location: CLLocation) {
+        // 如果是第一次更新位置，设置为起始位置
+        if userOriginLocation == nil {
+            userOriginLocation = location
+        }
+        
         // Check if location change is significant enough
         if let lastLocation = lastLocation {
             let distanceChange = location.distance(from: lastLocation)
@@ -262,6 +309,21 @@ class PacingManager: NSObject {
                 if !finalStats.speedHistory.isEmpty {
                     finalStats.maxSpeed = finalStats.speedHistory.max() ?? 0
                     finalStats.minSpeed = finalStats.speedHistory.min() ?? 0
+                }
+                
+                // Create and save walking record
+                if let lastLocation = self?.lastLocation,
+                   let originLocation = self?.userOriginLocation {
+                    let distance = lastLocation.distance(from: originLocation)
+                    let record = WalkingRecord(
+                        distance: distance,
+                        duration: finalStats.duration,
+                        date: Date(),
+                        weatherCondition: "current", // You might want to get this from WeatherService
+                        weatherSpeedFactor: self?.userSpeedProfile.weatherSpeedFactor ?? 1.0
+                    )
+                    self?.userSpeedProfile.walkingRecords.append(record)
+                    self?.userSpeedProfile.saveWalkingRecords()
                 }
                 
                 // Notify about completion

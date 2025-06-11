@@ -8,6 +8,10 @@ target 'googlemap_navigation' do
   use_frameworks!
   pod 'GoogleMaps'
   pod 'GooglePlaces'
+  # Firebase
+  pod 'Firebase/Core'
+  pod 'Firebase/Firestore'
+  pod 'Firebase/Auth'
   # Pods for googlemap_navigation
 
   target 'googlemap_navigationTests' do

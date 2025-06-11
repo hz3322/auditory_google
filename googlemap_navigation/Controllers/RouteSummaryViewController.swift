@@ -26,6 +26,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var pacingManager: PacingManager?
     private var currentLocation: CLLocation?
     private var journeyProgressService: JourneyProgressService?
+    private var userOriginLocation: CLLocation? // Add this line to store the starting location
     
     var totalEstimatedTime: String?
     var walkToStationTime: String?
@@ -78,8 +79,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private var progressService: JourneyProgressService? // This service will provide the dynamic CatchStatus
     private let deltaTimeLabel = UILabel() // Displays dynamic catch status and time
     
-    // GPS coordinates for the initial walk phase if JourneyProgressService uses them directly
-    private var userOriginLocation: CLLocation? // User's actual start (for JourneyProgressService)
+
 
     // Replace sloganLabel with summaryLabel
     private let summaryLabel: UILabel = {
@@ -1352,6 +1352,11 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         
         // Update current location
         currentLocation = location
+        
+        // Set origin location if not set
+        if userOriginLocation == nil {
+            userOriginLocation = location
+        }
         
         // Update journey progress
         journeyProgressService?.updateProgressWithLocation(currentLocation: location)

@@ -1,24 +1,43 @@
-//
-//  SceneDelegate.swift
-//  googlemap_navigation
-//
-//  Created by 赵韩雪 on 27/04/2025.
-//
 
 import UIKit
+import GoogleMaps
+import GooglePlaces
+import CoreLocation
+import FirebaseAuth
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
-
+    
     var window: UIWindow?
-
-
-    // SceneDelegate.swift
-
+    
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        // Initialize CoreData
+        _ = CoreDataManager.shared.persistentContainer
+        
+        // 设置 Firebase 同步间隔为一周
+        WalkingDataManager.shared.setSyncIntervalInDays(7)
+        
+        // 初始化步行数据管理器
+        _ = WalkingDataManager.shared
+        
         guard let windowScene = (scene as? UIWindowScene) else { return }
+        
+        // 设置窗口
         let window = UIWindow(windowScene: windowScene)
-        window.rootViewController = SplashViewController() // 初始是splash
         self.window = window
+        
+        // 根据用户登录状态设置根视图控制器
+        if Auth.auth().currentUser != nil {
+            // 用户已登录，显示主页
+            let homeVC = HomeViewController()
+            let navigationController = UINavigationController(rootViewController: homeVC)
+            window.rootViewController = navigationController
+        } else {
+            // 用户未登录，显示启动页
+            let splashVC = SplashViewController()
+            let navigationController = UINavigationController(rootViewController: splashVC)
+            window.rootViewController = navigationController
+        }
+        
         window.makeKeyAndVisible()
     }
 
@@ -50,7 +69,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // Use this method to save data, release shared resources, and store enough scene-specific state information
         // to restore the scene back to its current state.
     }
+}
 
+// MARK: - Notification Names
 
+extension Notification.Name {
+    static let locationDidUpdate = Notification.Name("locationDidUpdate")
 }
 

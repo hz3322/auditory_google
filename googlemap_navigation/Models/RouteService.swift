@@ -300,20 +300,7 @@ public final class RouteService {
         return (walkMin, transitMin, walkSteps, transitInfos)
     }
     
-    // MARK: - Navigation
-    
-    /// Navigates to the Route Summary screen with the calculated route details.
-    /// It prepares the data and pushes the view controller onto the navigation stack.
-    ///
-    /// - Parameters:
-    ///   - viewController: The view controller initiating the navigation.
-    ///   - transitInfos: The calculated transit segments.
-    ///   - walkSteps: The calculated walking steps.
-    ///   - estimated: The total estimated time as a formatted string.
-    ///   - walkToStationMin: Estimated walking time to the first station in minutes.
-    ///   - walkToDestinationMin: Estimated walking time from the last station to the destination in minutes.
-    ///   - currentWeather: The current weather condition.
-    ///   - weatherSpeedFactor: The weather-adjusted speed factor.
+
     func navigateToSummary(
         from viewController: UIViewController,
         transitInfos: [TransitInfo],
