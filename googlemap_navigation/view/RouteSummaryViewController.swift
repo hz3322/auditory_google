@@ -2,7 +2,7 @@ import UIKit
 import CoreLocation
 
 
-class RouteSummaryView: UIViewController, CLLocationManagerDelegate {
+class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     
     // MARK: - Tag Constants
     private let transitCardBaseTag = 1000
@@ -1053,7 +1053,7 @@ class RouteSummaryView: UIViewController, CLLocationManagerDelegate {
                                 fromStation:         StationNameUtils.normalizeStationName(departureStationName),
                                 toStation:           StationNameUtils.normalizeStationName(prediction.destinationName ?? ""),
                                 stops:               [],
-                                expectedArrival:     RouteSummaryView.shortTimeFormatter.string(from: prediction.expectedArrival),
+                                expectedArrival:     RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
                                 expectedArrivalDate: prediction.expectedArrival,
                                 timeToStation:       dynamicTravelSec,
                                 timeLeftToCatch:     timeLeftToCatch,
@@ -1155,7 +1155,7 @@ class RouteSummaryView: UIViewController, CLLocationManagerDelegate {
                     fromStation:         info.fromStation,
                     toStation:           info.toStation,
                     stops:               info.stops,
-                    expectedArrival:     RouteSummaryView.shortTimeFormatter.string(from: info.expectedArrivalDate),
+                    expectedArrival:     RouteSummaryViewController.shortTimeFormatter.string(from: info.expectedArrivalDate),
                     expectedArrivalDate: info.expectedArrivalDate,
                     timeToStation:       travelSec,
                     timeLeftToCatch:     newTimeLeft,
@@ -1247,7 +1247,7 @@ class RouteSummaryView: UIViewController, CLLocationManagerDelegate {
                         fromStation:         StationNameUtils.normalizeStationName(departureStationName),
                         toStation:           StationNameUtils.normalizeStationName(prediction.destinationName ?? ""),
                         stops:               [],
-                        expectedArrival:     RouteSummaryView.shortTimeFormatter.string(from: prediction.expectedArrival),
+                        expectedArrival:     RouteSummaryViewController.shortTimeFormatter.string(from: prediction.expectedArrival),
                         expectedArrivalDate: prediction.expectedArrival,
                         timeToStation:       travelSec,
                         timeLeftToCatch:     left,
@@ -1697,7 +1697,7 @@ class RouteSummaryView: UIViewController, CLLocationManagerDelegate {
 }
 
 // MARK: - JourneyProgressDelegate Extension
-extension RouteSummaryView: JourneyProgressDelegate {
+extension RouteSummaryViewController: JourneyProgressDelegate {
     func journeyProgressDidUpdate(
         overallProgress: Double,
         phaseProgress: Double,

@@ -2,7 +2,7 @@ import UIKit
 import GoogleMaps
 import CoreLocation
 
-class RoutePreviewView: UIViewController, GMSMapViewDelegate {
+class RoutePreviewViewController: UIViewController, GMSMapViewDelegate {
     // MARK: - Inputs
     var startLocation: CLLocationCoordinate2D?
     var destinationLocation: CLLocationCoordinate2D?

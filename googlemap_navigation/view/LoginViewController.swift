@@ -2,7 +2,7 @@ import UIKit
 import FirebaseAuth
 import FirebaseCore
 
-class LoginView: UIViewController {
+class LoginViewController: UIViewController {
     
     // MARK: - UI Components
     private let scrollView: UIScrollView = {
@@ -309,7 +309,7 @@ class LoginView: UIViewController {
     
     // Helper to switch to the main app, passing username
     func enterMainApp(username: String?) {
-        let homeVC = HomeView()
+        let homeVC = HomeViewController()
         
         // Always create a valid UserProfile
         let profileName = username?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Guest User"
