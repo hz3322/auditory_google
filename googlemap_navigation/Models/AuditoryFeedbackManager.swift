@@ -2,16 +2,17 @@ import AVFoundation
 import Foundation
 import CoreLocation
 import GoogleMaps
+import UIKit
 
 class AuditoryFeedbackManager {
     static let shared = AuditoryFeedbackManager()
-    private var audioPlayer: AVAudioPlayer?
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var lastFeedbackTime: Date = Date()
     private let minimumFeedbackInterval: TimeInterval = 20.0 // 20 seconds between feedbacks
     private var currentSegment: (catchStatus: String, requiredPace: Double)?
     private var trainStatus: (arrivalTime: TimeInterval, isDelayed: Bool, delayMinutes: Int)?
     private var isInPlatformZone: Bool = false
+    private weak var currentViewController: UIViewController?
 
     private init() {}
 
@@ -32,6 +33,11 @@ class AuditoryFeedbackManager {
         isInPlatformZone = isInZone
         checkAndProvideFeedback()
     }
+    
+    // Set current view controller for showing alerts
+    func setCurrentViewController(_ viewController: UIViewController) {
+        currentViewController = viewController
+    }
 
     private func checkAndProvideFeedback() {
         let now = Date()
@@ -41,14 +47,14 @@ class AuditoryFeedbackManager {
 
         // Check for train delay first
         if let trainStatus = trainStatus, trainStatus.isDelayed {
-            playFeedback(.trainDelayed(minutes: trainStatus.delayMinutes))
+            provideFeedback(.trainDelayed(minutes: trainStatus.delayMinutes))
             lastFeedbackTime = now
             return
         }
 
         // Check for train arrival
         if let trainStatus = trainStatus, trainStatus.arrivalTime < 60 && isInPlatformZone {
-            playFeedback(.trainArrivingNow)
+            provideFeedback(.trainArrivingNow)
             lastFeedbackTime = now
             return
         }
@@ -59,16 +65,16 @@ class AuditoryFeedbackManager {
             case "Hurry":
                 let currentPace = MotionManager.shared.currentSpeed
                 if currentPace < segment.requiredPace {
-                    playFeedback(.speedUp)
+                    provideFeedback(.speedUp)
                     lastFeedbackTime = now
                 }
             case "Tough":
                 if let trainStatus = trainStatus, trainStatus.arrivalTime < 60 {
-                    playFeedback(.likelyMissed)
+                    provideFeedback(.likelyMissed)
                     lastFeedbackTime = now
                 }
             case "Easy":
-                playFeedback(.onTime)
+                provideFeedback(.onTime)
                 lastFeedbackTime = now
             default:
                 break
@@ -76,15 +82,7 @@ class AuditoryFeedbackManager {
         }
     }
 
-    private func playFeedback(_ type: FeedbackType) {
-        // Play sound effect
-        if let fileName = type.soundFileName,
-           let url = Bundle.main.url(forResource: fileName, withExtension: nil) {
-            audioPlayer = try? AVAudioPlayer(contentsOf: url)
-            audioPlayer?.prepareToPlay()
-            audioPlayer?.play()
-        }
-
+    private func provideFeedback(_ type: FeedbackType) {
         // Provide speech feedback
         if let speech = type.speechText {
             let utterance = AVSpeechUtterance(string: speech)
@@ -92,10 +90,33 @@ class AuditoryFeedbackManager {
             utterance.rate = 0.5
             speechSynthesizer.speak(utterance)
         }
+
+        // Show visual feedback
+        if let visualText = type.visualText {
+            DispatchQueue.main.async { [weak self] in
+                self?.showAlert(with: visualText)
+            }
+        }
+    }
+    
+    private func showAlert(with message: String) {
+        guard let viewController = currentViewController else { return }
+        
+        // Create alert controller
+        let alert = UIAlertController(
+            title: "Journey Update",
+            message: message,
+            preferredStyle: .alert
+        )
+        
+        // Add OK button
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        
+        // Show alert
+        viewController.present(alert, animated: true)
     }
 
     func stopFeedback() {
-        audioPlayer?.stop()
         speechSynthesizer.stopSpeaking(at: .immediate)
     }
 }

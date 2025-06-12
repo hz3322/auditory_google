@@ -125,7 +125,10 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
         super.viewDidLoad()
         setupUI()
         setupLocationManager()
-        setupStatusButton() // Add this line
+        setupStatusButton()
+        
+        // Set current view controller for auditory feedback
+        AuditoryFeedbackManager.shared.setCurrentViewController(self)
         
         self.title = "Journey Summary"
         navigationController?.navigationBar.tintColor = AppColors.accentBlue

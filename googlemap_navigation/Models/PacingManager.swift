@@ -9,6 +9,11 @@ class PacingManager: NSObject {
     private var lastLocation: CLLocation?
     private let minimumLocationChangeDistance: CLLocationDistance = 10.0 // Minimum distance change threshold in meters
     
+    // Metronome properties
+    private var tickCount: Int = 0
+    private let maxTicks: Int = 10  // 最多播放10次tick
+    private var shouldContinuePacing: Bool = false  // 是否需要继续节拍
+    
     // Station information
     var distanceToStation: CLLocationDistance = 0      // in meters
     var timeToDeparture: TimeInterval = 0              // in seconds
@@ -266,6 +271,10 @@ class PacingManager: NSObject {
     }
     
     private func startPacing(forSpeedRatio ratio: Double) {
+        // Reset tick count
+        tickCount = 0
+        shouldContinuePacing = true
+        
         // Determine alert frequency based on speed ratio
         // ratio > 1 means too fast, need to slow down
         // ratio < 1 means too slow, need to speed up
@@ -275,7 +284,24 @@ class PacingManager: NSObject {
         // Restart metronome timer
         metronomeTimer?.invalidate()
         metronomeTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.playTick()
+            guard let self = self else { return }
+            
+            // Play tick and increment count
+            self.playTick()
+            self.tickCount += 1
+            
+            // Check if we should stop or continue
+            if self.tickCount >= self.maxTicks {
+                self.metronomeTimer?.invalidate()
+                self.metronomeTimer = nil
+                
+                // If we still need pacing, start a new cycle after a short pause
+                if self.shouldContinuePacing {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                        self?.startPacing(forSpeedRatio: ratio)
+                    }
+                }
+            }
         }
     }
     
@@ -284,8 +310,10 @@ class PacingManager: NSObject {
     }
     
     func stopPacing() {
+        shouldContinuePacing = false  // 确保不会开始新的节拍循环
         metronomeTimer?.invalidate()
         metronomeTimer = nil
+        tickCount = 0
         MotionManager.shared.stopTracking()
     }
     
