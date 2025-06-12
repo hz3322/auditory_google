@@ -1,6 +1,6 @@
 import UIKit
 
-class SplashViewController: UIViewController {
+class SplashView: UIViewController {
     private let logoImageView: UIImageView = {
         let imageView = UIImageView(image: UIImage(named: "ontimego_logo"))
         imageView.contentMode = .scaleAspectFit
@@ -56,7 +56,7 @@ class SplashViewController: UIViewController {
     }
 
     private func goToHome() {
-        let loginVC = LoginViewController()
+        let loginVC = LoginView()
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first {
             window.rootViewController = UINavigationController(rootViewController: loginVC)

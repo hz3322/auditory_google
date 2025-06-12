@@ -3,7 +3,7 @@ struct UserProfile {
     var name: String
 }
 
-class ProfileViewController: UIViewController {
+class ProfileView: UIViewController {
 
     var userProfile: UserProfile?
 

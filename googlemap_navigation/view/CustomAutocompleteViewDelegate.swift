@@ -2,13 +2,13 @@ import UIKit
 import GooglePlaces
 import CoreLocation
 
-protocol CustomAutocompleteViewControllerDelegate: AnyObject {
-    func customAutocompleteViewController(_ controller: CustomAutocompleteViewController, didSelectPlace place: GMSPlace)
-    func customAutocompleteViewController(_ controller: CustomAutocompleteViewController, didSelectCurrentLocation location: CLLocationCoordinate2D)
-    func customAutocompleteViewControllerDidCancel(_ controller: CustomAutocompleteViewController)
+protocol CustomAutocompleteViewDelegate: AnyObject {
+    func customAutocompleteViewController(_ controller: CustomAutocompleteView, didSelectPlace place: GMSPlace)
+    func customAutocompleteViewController(_ controller: CustomAutocompleteView, didSelectCurrentLocation location: CLLocationCoordinate2D)
+    func customAutocompleteViewControllerDidCancel(_ controller: CustomAutocompleteView)
 }
 
-class CustomAutocompleteViewController: UIViewController {
+class CustomAutocompleteView: UIViewController {
     
     // MARK: - Properties
     private let searchBar: UISearchBar
@@ -18,7 +18,7 @@ class CustomAutocompleteViewController: UIViewController {
     private let locationManager: CLLocationManager
     private var currentLocation: CLLocationCoordinate2D?
     private var recentSearches: [SearchHistory] = []
-    weak var delegate: CustomAutocompleteViewControllerDelegate?
+    weak var delegate: CustomAutocompleteViewDelegate?
     
     // Add property to track which text field is active
     var isForStartLocation: Bool = true
@@ -120,7 +120,7 @@ class CustomAutocompleteViewController: UIViewController {
     }
 
     // MARK: - UISearchBarDelegate
-    extension CustomAutocompleteViewController: UISearchBarDelegate {
+    extension CustomAutocompleteView: UISearchBarDelegate {
         func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
             if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 // Show history when search bar is empty
@@ -137,7 +137,7 @@ class CustomAutocompleteViewController: UIViewController {
     }
 
     // MARK: - UITableViewDataSource & UITableViewDelegate
-    extension CustomAutocompleteViewController: UITableViewDataSource, UITableViewDelegate {
+    extension CustomAutocompleteView: UITableViewDataSource, UITableViewDelegate {
         func numberOfSections(in tableView: UITableView) -> Int {
             return 1
         }
@@ -210,7 +210,7 @@ class CustomAutocompleteViewController: UIViewController {
     }
 
     // MARK: - GMSAutocompleteFetcherDelegate
-    extension CustomAutocompleteViewController: GMSAutocompleteFetcherDelegate {
+    extension CustomAutocompleteView: GMSAutocompleteFetcherDelegate {
         func didAutocomplete(with predictions: [GMSAutocompletePrediction]) {
             self.predictions = predictions
             DispatchQueue.main.async { [weak self] in
@@ -223,7 +223,7 @@ class CustomAutocompleteViewController: UIViewController {
     }
 
     // MARK: - CLLocationManagerDelegate
-    extension CustomAutocompleteViewController: CLLocationManagerDelegate {
+    extension CustomAutocompleteView: CLLocationManagerDelegate {
         func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
             if let location = locations.first {
                 currentLocation = location.coordinate

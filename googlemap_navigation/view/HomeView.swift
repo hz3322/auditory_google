@@ -6,7 +6,7 @@ import FirebaseFirestore
 import FirebaseAuth
 
 
-class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate, CustomAutocompleteViewControllerDelegate {
+class HomeView: UIViewController, CLLocationManagerDelegate, UITextFieldDelegate, GMSAutocompleteViewControllerDelegate, CustomAutocompleteViewDelegate {
 
     // MARK: - Properties
     private let locationManager = CLLocationManager()
@@ -756,7 +756,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private func handleFrequentPlaceTap(_ tappedPlace: SavedPlace) {
         if tappedPlace.address.starts(with: "Tap to set") {
             self.currentlySettingPlaceName = tappedPlace.name
-            let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: true)
+            let customAutocompleteVC = CustomAutocompleteView(isForStartLocation: true)
             customAutocompleteVC.delegate = self
             let nav = UINavigationController(rootViewController: customAutocompleteVC)
             present(nav, animated: true)
@@ -768,7 +768,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     
     @objc private func addNewFrequentPlaceTapped() {
         self.currentlySettingPlaceName = nil
-        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: true)
+        let customAutocompleteVC = CustomAutocompleteView(isForStartLocation: true)
         customAutocompleteVC.delegate = self
         let nav = UINavigationController(rootViewController: customAutocompleteVC)
         present(nav, animated: true)
@@ -781,7 +781,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             return
         }
         currentlyEditingFrequentPlace = placeToEdit
-        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: true)
+        let customAutocompleteVC = CustomAutocompleteView(isForStartLocation: true)
         customAutocompleteVC.delegate = self
         let nav = UINavigationController(rootViewController: customAutocompleteVC)
         present(nav, animated: true)
@@ -1271,7 +1271,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
         activeTextField = textField
         
-        let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
+        let customAutocompleteVC = CustomAutocompleteView(isForStartLocation: textField === startTextField)
         customAutocompleteVC.delegate = self
         let nav = UINavigationController(rootViewController: customAutocompleteVC)
         present(nav, animated: true, completion: nil)
@@ -1284,7 +1284,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     func wasCancelled(_ viewController: GMSAutocompleteViewController) { }
 
     // MARK: - CustomAutocompleteViewControllerDelegate
-    func customAutocompleteViewController(_ controller: CustomAutocompleteViewController, didSelectPlace place: GMSPlace) {
+    func customAutocompleteViewController(_ controller: CustomAutocompleteView, didSelectPlace place: GMSPlace) {
         let placeAddress = place.formattedAddress ?? place.name ?? "Selected Location"
         let placeCoordinate = place.coordinate
         
@@ -1327,7 +1327,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
     }
     
-    func customAutocompleteViewController(_ controller: CustomAutocompleteViewController, didSelectCurrentLocation location: CLLocationCoordinate2D) {
+    func customAutocompleteViewController(_ controller: CustomAutocompleteView, didSelectCurrentLocation location: CLLocationCoordinate2D) {
         controller.dismiss(animated: true) { [weak self] in
             guard let self = self else { return }
             
@@ -1344,7 +1344,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
     }
     
-    func customAutocompleteViewControllerDidCancel(_ controller: CustomAutocompleteViewController) {
+    func customAutocompleteViewControllerDidCancel(_ controller: CustomAutocompleteView) {
         controller.dismiss(animated: true)
         // 确保文本字段保持可交互状态
         if activeTextField === startTextField {
