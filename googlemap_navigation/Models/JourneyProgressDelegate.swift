@@ -25,6 +25,7 @@ enum ProgressPhase: Equatable {
 
 class JourneyProgressService {
     weak var delegate: JourneyProgressDelegate?
+    weak var pacingManager: PacingManager?  // 添加 pacingManager 引用
 
     // --- Config/Data ---
     var walkToStationSec: Double
@@ -138,7 +139,6 @@ class JourneyProgressService {
     }
 
     // ---- For GPS updates (walkToStation phase only) ----
-    // In updateProgressWithLocation(currentLocation: CLLocation)
     func updateProgressWithLocation(currentLocation: CLLocation) {
         guard phase == .walkToStation, let origin = originLocation, let station = stationLocation else { return }
 
@@ -150,10 +150,9 @@ class JourneyProgressService {
         }
         let distanceUserToStation = currentLocation.distance(from: station)
 
-        // Calculate current predicted walk time based on remaining distance and a speed estimate
-        // This is a simplified speed estimate. You might want a rolling average from GPS.
-        let assumedWalkingSpeed: Double = 1.2 // m/s (average, adjust as needed)
-        let remainingPredictedWalkTime = distanceUserToStation / assumedWalkingSpeed
+        // 使用用户的平均速度，如果没有则使用默认速度
+        let userAverageSpeed = pacingManager?.userSpeedProfile.getAdjustedSpeed() ?? 1.2 // m/s
+        let remainingPredictedWalkTime = distanceUserToStation / userAverageSpeed
 
         // Overall progress for this phase (walkToStation)
         let walkProgress = max(0, min(1, 1 - (distanceUserToStation / totalDistanceToStation)))

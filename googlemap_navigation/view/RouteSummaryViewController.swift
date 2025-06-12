@@ -441,41 +441,15 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     private func setupProgressService() {
         guard let firstTransitInfo = transitInfos.first,
               let departureStationName = firstTransitInfo.departureStation else {
-            print("Error: Cannot setup ProgressService - missing transit info (departureStation)")
+            print("Error: Cannot setup ProgressService - missing departure station")
             deltaTimeLabel.text = "Route data incomplete."
             deltaTimeLabel.textColor = .systemRed
             return
         }
-
-        // Check if departure point is current location
-        if let currentLocation = locationManager.location?.coordinate,
-           let routeStart = routeStartCoordinate {
-            let distance = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
-                .distance(from: CLLocation(latitude: routeStart.latitude, longitude: routeStart.longitude))
-            
-            // If departure point is not current location (more than 100 meters away)
-            if distance > 100 {
-                // Use static Google Maps data
-                deltaTimeLabel.text = "Using planned route data"
-                deltaTimeLabel.textColor = .secondaryLabel
-                return
-            }
-        }
-
+        
         let normalizedKey = StationNameUtils.normalizeStationName(departureStationName)
-        var stationData = stationCoordinates[normalizedKey]
-
-        // If not found, try fuzzy match
-        if stationData == nil {
-            // Try to find a key that CONTAINS the normalized name
-            if let fuzzyKey = stationCoordinates.keys.first(where: { StationNameUtils.normalizeStationName($0) == normalizedKey || $0.lowercased().contains(normalizedKey) }) {
-                stationData = stationCoordinates[fuzzyKey]
-                print("Fuzzy match for station coordinate: \(fuzzyKey)")
-            }
-        }
-
-        guard let stationData = stationData else {
-            print("Error: Cannot setup ProgressService - missing stationCoordinates for \(departureStationName) (normalized: \(normalizedKey))")
+        guard let stationData = stationCoordinates[normalizedKey] else {
+            print("Error: Cannot setup ProgressService - missing station data for \(departureStationName) (normalized: \(normalizedKey))")
             print("Available stationCoordinate keys: \(stationCoordinates.keys)")
             deltaTimeLabel.text = "Route data incomplete."
             deltaTimeLabel.textColor = .systemRed
@@ -493,6 +467,7 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             stationLocation: stationLocationForService
         )
         service.delegate = self
+        service.pacingManager = pacingManager  // 设置 pacingManager
         service.start()
         self.progressService = service
         
