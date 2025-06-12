@@ -84,6 +84,9 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private var isShowingSearchHistory = false
     private var activeTextField: UITextField?
 
+    // Add new property for location cache
+    private var lastKnownLocation: CLLocation?
+
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -899,9 +902,63 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     
     private func setupLocationManager() {
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        locationManager.distanceFilter = 50
+        locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        locationManager.distanceFilter = 5
+        locationManager.activityType = .otherNavigation
+        locationManager.pausesLocationUpdatesAutomatically = false
+        
+        // Request location permission and start updates immediately
         locationManager.requestWhenInUseAuthorization()
+        
+        // Try to get last known location first
+        if let lastLocation = locationManager.location {
+            self.lastKnownLocation = lastLocation
+            self.currentLocation = lastLocation.coordinate
+            self.updateUIWithLocation(lastLocation.coordinate)
+        }
+        
+        // Start significant location changes for faster initial fix
+        locationManager.startMonitoringSignificantLocationChanges()
+        locationManager.startUpdatingLocation()
+    }
+
+    private func updateUIWithLocation(_ coordinate: CLLocationCoordinate2D) {
+        // Update current location immediately
+        currentLocation = coordinate
+        
+        // Update UI immediately
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if self.startTextField.text == "Getting current location..." {
+                self.startTextField.text = "Current Location"
+                self.startTextField.isEnabled = true
+            }
+            self.updateStartTripButtonState()
+        }
+        
+        // Only proceed with map updates if UI is ready
+        guard isUILayoutComplete else {
+            print("⚠️ UI layout not yet complete. Buffering location.")
+            return
+        }
+        
+        // Update map view if needed
+        if let mapView = self.mapView {
+            if mapView.camera.target.latitude == 0 && mapView.camera.target.longitude == 0 {
+                print("ℹ️ Setting initial map position to: \(coordinate)")
+                mapView.camera = GMSCameraPosition.camera(withTarget: coordinate, zoom: 14)
+                mapView.isMyLocationEnabled = true
+                displayAttractions()
+            }
+        }
+
+        // Update area name
+        fetchCurrentAreaName(from: coordinate) { [weak self] area in
+            DispatchQueue.main.async { self?.updateAreaBlock(area) }
+        }
+        
+        // Fetch weather data with the new coordinates
+        fetchCurrentWeather(at: coordinate)
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -910,40 +967,26 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             return
         }
 
-        let newCoordinate = lastReceivedLocation.coordinate
+        // Update last known location
+        lastKnownLocation = lastReceivedLocation
         
-        // Update current location immediately
-        currentLocation = newCoordinate
-        
-        // Only proceed with map updates if UI is ready
-        guard isUILayoutComplete else {
-            print("⚠️ locationManager didUpdateLocations: UI layout not yet complete. Buffering location.")
-            return
-        }
-        
-        // Update map view if needed
-        if let mapView = self.mapView {
-            if mapView.camera.target.latitude == 0 && mapView.camera.target.longitude == 0 {
-                print("ℹ️ Setting initial map position to: \(newCoordinate)")
-                mapView.camera = GMSCameraPosition.camera(withTarget: newCoordinate, zoom: 14)
-                mapView.isMyLocationEnabled = true
-                displayAttractions()
-            }
-        }
-
-        // Update area name
-        fetchCurrentAreaName(from: newCoordinate) { [weak self] area in
-            DispatchQueue.main.async { self?.updateAreaBlock(area) }
-        }
-        
-        // Fetch weather data with the new coordinates
-        fetchCurrentWeather(at: newCoordinate)
+        // Update UI with new location
+        updateUIWithLocation(lastReceivedLocation.coordinate)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("🛑 Location manager failed with error: \(error.localizedDescription)")
         areaLabel?.text = "Area unknown (Error)"
-        // Potentially show an alert to the user
+        
+        // If waiting for current location, show error state
+        if startTextField.text == "Getting current location..." {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.startTextField.text = "Location Error"
+                self.startTextField.isEnabled = true
+                self.showErrorAlert(message: "Could not get your current location. Please try again or select a different location.")
+            }
+        }
     }
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -1271,12 +1314,26 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
         activeTextField = textField
         
+        // If it's start location and no current location yet, show loading state
+        if textField === startTextField && currentLocation == nil {
+            startTextField.text = "Getting current location..."
+            startTextField.isEnabled = false
+            
+            // If location manager hasn't started updating, start immediately
+            if locationManager.authorizationStatus == .authorizedWhenInUse || 
+               locationManager.authorizationStatus == .authorizedAlways {
+                locationManager.startUpdatingLocation()
+            }
+            
+            return false
+        }
+        
         let customAutocompleteVC = CustomAutocompleteViewController(isForStartLocation: textField === startTextField)
         customAutocompleteVC.delegate = self
         let nav = UINavigationController(rootViewController: customAutocompleteVC)
         present(nav, animated: true, completion: nil)
         
-        return false // 返回 false，因为我们是弹出一个新页面来处理输入
+        return false
     }
 
     func viewController(_ viewController: GMSAutocompleteViewController, didAutocompleteWith place: GMSPlace) { }
@@ -1419,6 +1476,12 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             print("❌ Error signing out: \(error.localizedDescription)")
             showErrorAlert(message: "Failed to sign out. Please try again.")
         }
+    }
+
+    // Add cleanup in deinit
+    deinit {
+        locationManager.stopUpdatingLocation()
+        locationManager.stopMonitoringSignificantLocationChanges()
     }
 }
 
