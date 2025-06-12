@@ -87,6 +87,14 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     // Add new property for location cache
     private var lastKnownLocation: CLLocation?
 
+    // 定义站点数据结构
+    private struct Station {
+        let name: String
+        let coordinate: CLLocationCoordinate2D
+        let distance: Double
+        let lines: [String]
+    }
+
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -114,7 +122,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         // Set isUILayoutComplete to true after all UI setup is done
         isUILayoutComplete = true
         
-        // 确保在所有 UI 设置完成后重新设置 delegate
+        // Ensure delegates are set after all UI setup is complete
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             print("[Debug] Re-setting delegates in viewDidLoad")
@@ -154,7 +162,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             }
             
             if self.currentLocation != nil {
-                self.displayAttractions()
+                self.displayStations()
             }
         }
     }
@@ -259,7 +267,19 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
 
     private func setupGreetingAndLogo() {
-        let username = userProfile?.name ?? "Guest User"
+        // Get username from Firebase Auth first, then fallback to userProfile
+        let username: String
+        if let firebaseUser = Auth.auth().currentUser,
+           let displayName = firebaseUser.displayName,
+           !displayName.isEmpty {
+            username = displayName
+        } else if let profileName = userProfile?.name,
+                  !profileName.isEmpty {
+            username = profileName
+        } else {
+            username = "Guest User"
+        }
+        
         let greeting = getGreetingText()
         let greetingLogoAndAreaStack = makeGreetingWithLogoAndAreaBlock(greeting: greeting, username: username, area: "Locating...")
         contentStack.addArrangedSubview(greetingLogoAndAreaStack)
@@ -448,7 +468,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     }
 
     private func setupNearAttractionsSection() {
-        let nearLabel = makeSectionHeaderLabel(text: "Near You")
+        let nearLabel = makeSectionHeaderLabel(text: "Station Near You")
         contentStack.addArrangedSubview(nearLabel)
         contentStack.setCustomSpacing(12, after: nearLabel)
 
@@ -948,7 +968,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                 print("ℹ️ Setting initial map position to: \(coordinate)")
                 mapView.camera = GMSCameraPosition.camera(withTarget: coordinate, zoom: 14)
                 mapView.isMyLocationEnabled = true
-                displayAttractions()
+                displayStations()
             }
         }
 
@@ -959,6 +979,13 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         
         // Fetch weather data with the new coordinates
         fetchCurrentWeather(at: coordinate)
+    }
+
+    // Add back the parseCoord function
+    private func parseCoord(from string: String) -> CLLocationCoordinate2D? {
+        let parts = string.split(separator: ",")
+        guard parts.count == 2, let lat = Double(parts[0]), let lng = Double(parts[1]) else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lng)
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -1008,19 +1035,19 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         }
     }
 
-    // MARK: - Attractions Loading & UI (Ensure API_KEY is used from APIKeys.googleMaps)
-     private func displayAttractions() {
+    // MARK: - Station Loading & UI
+    private func displayStations() {
         guard self.isUILayoutComplete else { 
-             print("⚠️ displayAttractions: UI layout not complete. Aborting.")
-                        return
-                    }
+            print("⚠️ displayStations: UI layout not complete. Aborting.")
+            return
+        }
                     
         guard let coord = currentLocation else {
-            print("ℹ️ Cannot display attractions, current location is nil.")
-                    DispatchQueue.main.async {
+            print("ℹ️ Cannot display stations, current location is nil.")
+            DispatchQueue.main.async {
                 self.nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
                 let noLocationLabel = UILabel()
-                noLocationLabel.text = "Enable location to see nearby attractions."
+                noLocationLabel.text = "Enable location to see nearby tube stations."
                 noLocationLabel.font = .systemFont(ofSize: 14)
                 noLocationLabel.textColor = AppColors.secondaryText
                 noLocationLabel.textAlignment = .center
@@ -1028,180 +1055,265 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             }
             return
         }
-         guard self.nearAttractionsStack != nil else {
-            print("🛑 displayAttractions: nearAttractionsStack is unexpectedly nil!")
-                return
-            }
+        
+        guard self.nearAttractionsStack != nil else {
+            print("🛑 displayStations: nearAttractionsStack is unexpectedly nil!")
+            return
+        }
             
         nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         displayedPlaceNames.removeAll()
 
-        let desiredCount = Int.random(in: 3...5)
-        var fetchedCount = 0
-        var candidatesProcessed = 0
-        let maxTries = 20
+        // 显示加载指示器
+        let loadingLabel = UILabel()
+        loadingLabel.text = "Loading nearby stations..."
+        loadingLabel.font = .systemFont(ofSize: 14)
+        loadingLabel.textColor = AppColors.secondaryText
+        loadingLabel.textAlignment = .center
+        nearAttractionsStack.addArrangedSubview(loadingLabel)
 
-        func fetchOneAttractionRecursive() {
-            guard fetchedCount < desiredCount, candidatesProcessed < maxTries else {
-                if fetchedCount == 0 && self.nearAttractionsStack.arrangedSubviews.isEmpty {
-                    DispatchQueue.main.async {
-                        let noAttractionsLabel = UILabel()
-                        noAttractionsLabel.text = "No attractions found nearby."
-                        noAttractionsLabel.font = .systemFont(ofSize: 14)
-                        noAttractionsLabel.textColor = AppColors.secondaryText
-                        noAttractionsLabel.textAlignment = .center
-                        self.nearAttractionsStack.addArrangedSubview(noAttractionsLabel)
-                    }
-                }
+        // 获取附近的站点
+        fetchNearbyStations(coord: coord) { [weak self] stations in
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
+                // 移除加载指示器
+                loadingLabel.removeFromSuperview()
+                
+                if stations.isEmpty {
+                    let noStationsLabel = UILabel()
+                    noStationsLabel.text = "No tube stations found nearby."
+                    noStationsLabel.font = .systemFont(ofSize: 14)
+                    noStationsLabel.textColor = AppColors.secondaryText
+                    noStationsLabel.textAlignment = .center
+                    self.nearAttractionsStack.addArrangedSubview(noStationsLabel)
                     return
                 }
-            candidatesProcessed += 1
-
-            self.fetchNearbyAttractionImage(coord: coord) { [weak self] image, name, placeCoord in
-                guard let self = self else { return }
                 
-                if let img = image, let placeName = name, let placeCoordinate = placeCoord, !self.displayedPlaceNames.contains(placeName) {
-                    self.displayedPlaceNames.insert(placeName)
-                DispatchQueue.main.async {
-                        // Clear "no attractions" label if it exists
-                        if let label = self.nearAttractionsStack.arrangedSubviews.first as? UILabel,
-                           label.text == "No attractions found nearby." || label.text == "Enable location to see nearby attractions." {
-                            label.removeFromSuperview()
-                        }
-                        let card = self.makeAttractionCard(name: placeName, image: img, coord: placeCoordinate)
-                        self.nearAttractionsStack.addArrangedSubview(card)
-                    }
-                    fetchedCount += 1
+                // 显示找到的站点
+                for station in stations {
+                    let card = self.makeStationCard(name: station.name, coord: station.coordinate, lines: station.lines)
+                    self.nearAttractionsStack.addArrangedSubview(card)
                 }
-                // Continue fetching if conditions allow
-                fetchOneAttractionRecursive()
             }
         }
-        fetchOneAttractionRecursive()
     }
 
-    private func fetchNearbyAttractionImage(
-        coord: CLLocationCoordinate2D,
-        completion: @escaping (UIImage?, String?, CLLocationCoordinate2D?) -> Void
-    ) {
-        let apiKey = APIKeys.googleMaps
-
-        let urlStr = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=\(coord.latitude),\(coord.longitude)&radius=3000&type=tourist_attraction&key=\(apiKey)"
-        guard let url = URL(string: urlStr) else {
-            print("🛑 NS Error: Invalid URL for Nearby Search."); completion(nil, nil, nil); return
+    private func fetchNearbyStations(coord: CLLocationCoordinate2D, completion: @escaping ([Station]) -> Void) {
+        let baseURL = "https://api.tfl.gov.uk/StopPoint"
+        let radius = 2000
+        let stopTypes = "NaptanMetroStation"
+        let urlString = "\(baseURL)?lat=\(coord.latitude)&lon=\(coord.longitude)&stoptypes=\(stopTypes)&radius=\(radius)"
+        
+        print("🔍 Fetching TfL stations with URL: \(urlString)")
+        
+        guard let url = URL(string: urlString) else {
+            print("🛑 Error: Invalid TfL API URL")
+            completion([])
+            return
         }
 
         URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-            if let error = error { print("🛑 NS Error: \(error.localizedDescription)"); completion(nil, nil, nil); return }
-            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                print("🛑 NS Error: HTTP Status \( (response as? HTTPURLResponse)?.statusCode ?? 0 ) for URL: \(urlStr)")
-                if let data = data, let responseBody = String(data: data, encoding: .utf8) { print("🔗 NS Response body: \(responseBody)") }
-                completion(nil, nil, nil); return
+            guard let self = self else { completion([]); return }
+            
+            if let error = error {
+                print("🛑 TfL API Error: \(error.localizedDescription)")
+                completion([])
+                return
             }
-            guard let self = self, let data = data else { completion(nil, nil, nil); return }
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("🛑 TfL API Error: Invalid response")
+                completion([])
+                return
+            }
+            
+            print("📡 TfL API Response Status: \(httpResponse.statusCode)")
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                print("🛑 TfL API Error: HTTP Status \(httpResponse.statusCode)")
+                completion([])
+                return
+            }
+            
+            guard let data = data else {
+                print("🛑 TfL API Error: No data received")
+                completion([])
+                return
+            }
 
-            var jsonResponse: [String: Any]?
             do {
-                jsonResponse = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                guard let json = jsonResponse,
-                      let results = json["results"] as? [[String: Any]] else {
-                    print("🛑 NS Error: JSON Parsing failed or 'results' key missing. API Status: \(jsonResponse?["status"] as? String ?? "N/A")")
-                    if let responseString = String(data: data, encoding: .utf8) { print("🔗 Raw JSON Response (Nearby Search): \(responseString)") }
-                    completion(nil, nil, nil); return
+                let decoder = JSONDecoder()
+                let response = try decoder.decode(TfLStopPointResponse.self, from: data)
+                print("📊 Found \(response.stopPoints.count) stations")
+                
+                var stations: [Station] = []
+                
+                for stopPoint in response.stopPoints {
+                    // 只处理地铁站
+                    guard stopPoint.modes.contains("tube") else { continue }
+                    
+                    let stationCoord = CLLocationCoordinate2D(
+                        latitude: stopPoint.lat,
+                        longitude: stopPoint.lon
+                    )
+                    
+                    let distance = self.calculateDistance(from: coord, to: stationCoord)
+                    let lines = stopPoint.lines.map { $0.name }
+                    
+                    let station = Station(
+                        name: stopPoint.commonName,
+                        coordinate: stationCoord,
+                        distance: distance,
+                        lines: lines
+                    )
+                    stations.append(station)
                 }
                 
-                let freshCandidates = results.filter { p in (p["name"] as? String).map { !self.displayedPlaceNames.contains($0) && p["photos"] != nil } ?? false }
-                guard let place = freshCandidates.randomElement(),
-                      let name = place["name"] as? String,
-                      let geo = place["geometry"] as? [String: Any], let loc = geo["location"] as? [String: Any],
-                      let lat = loc["lat"] as? Double, let lng = loc["lng"] as? Double,
-                      let photosArray = place["photos"] as? [[String: Any]], !photosArray.isEmpty,
-                      let ref = photosArray.first?["photo_reference"] as? String else {
-                    completion(nil, nil, nil); return
-                }
-                let attractionCoord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-                if let cached = self.imageCache.object(forKey: ref as NSString) { completion(cached, name, attractionCoord); return }
-
-                let photoURLStr = "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=\(ref)&key=\(apiKey)"
-                guard let photoURL = URL(string: photoURLStr) else { print("🛑 PF Error: Invalid Photo URL"); completion(nil, name, attractionCoord); return }
-
-                URLSession.shared.dataTask(with: photoURL) { pData, pResponse, pError in
-                    if let pError = pError { print("🛑 PF Error: \(pError.localizedDescription)"); completion(nil, name, attractionCoord); return }
-                    guard let pHTTP = pResponse as? HTTPURLResponse, (200...299).contains(pHTTP.statusCode) else {
-                         print("🛑 PF Error: HTTP Status \( (pResponse as? HTTPURLResponse)?.statusCode ?? 0 ) for URL: \(photoURLStr)")
-                         if let photoData = pData, let responseBody = String(data: photoData, encoding: .utf8) { print("🔗 PF Response body: \(responseBody)") }
-                         completion(nil, name, attractionCoord); return
+                // 按距离排序并返回最近的5个站点
+                let sortedStations = stations.sorted { $0.distance < $1.distance }
+                print("🎯 Returning \(sortedStations.count) sorted stations")
+                completion(Array(sortedStations.prefix(5)))
+                
+            } catch {
+                print("🛑 TfL API Error: JSON parsing failed - \(error)")
+                if let decodingError = error as? DecodingError {
+                    switch decodingError {
+                    case .keyNotFound(let key, let context):
+                        print("Missing key: \(key.stringValue), context: \(context.debugDescription)")
+                    case .typeMismatch(let type, let context):
+                        print("Type mismatch: expected \(type), context: \(context.debugDescription)")
+                    case .valueNotFound(let type, let context):
+                        print("Value not found: expected \(type), context: \(context.debugDescription)")
+                    case .dataCorrupted(let context):
+                        print("Data corrupted: \(context.debugDescription)")
+                    @unknown default:
+                        print("Unknown decoding error")
                     }
-                    guard let data = pData, let image = UIImage(data: data) else { print("🛑 PF Error: No image data from photo ref \(ref)"); completion(nil, name, attractionCoord); return }
-                    self.imageCache.setObject(image, forKey: ref as NSString)
-                    completion(image, name, attractionCoord)
-                }.resume()
-            } catch { print("🛑 NS Error: JSON Catch \(error.localizedDescription)"); completion(nil, nil, nil) }
+                }
+                completion([])
+            }
         }.resume()
     }
+
+    private func calculateDistance(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
+        let fromLocation = CLLocation(latitude: from.latitude, longitude: from.longitude)
+        let toLocation = CLLocation(latitude: to.latitude, longitude: to.longitude)
+        return fromLocation.distance(from: toLocation)
+    }
+
+    // TfL API 响应模型
+    private struct TfLStopPointResponse: Codable {
+        let stopPoints: [TfLStopPoint]
+    }
+
+    private struct TfLStopPoint: Codable {
+        let naptanId: String
+        let commonName: String
+        let lat: Double
+        let lon: Double
+        let lines: [Line]
+        let modes: [String]
+        let lineModeGroups: [LineModeGroup]
+        
+        enum CodingKeys: String, CodingKey {
+            case naptanId
+            case commonName
+            case lat
+            case lon
+            case lines
+            case modes
+            case lineModeGroups
+        }
+    }
     
-    private func makeAttractionCard(name: String, image: UIImage, coord: CLLocationCoordinate2D) -> UIView {
+    private struct Line: Codable {
+        let id: String
+        let name: String
+        let uri: String
+        let type: String
+        
+        enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case uri
+            case type
+        }
+    }
+    
+    private struct LineModeGroup: Codable {
+        let modeName: String
+        let lineIdentifier: [String]
+        
+        enum CodingKeys: String, CodingKey {
+            case modeName
+            case lineIdentifier
+        }
+    }
+
+    private func makeStationCard(name: String, coord: CLLocationCoordinate2D, lines: [String] = []) -> UIView {
         let card = createCardView()
         card.widthAnchor.constraint(equalToConstant: 150).isActive = true
         card.heightAnchor.constraint(equalToConstant: 160).isActive = true
 
-        let imageView = UIImageView(image: image)
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFill
-        imageView.clipsToBounds = true
-        imageView.layer.cornerRadius = 10
-        imageView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-
-        let textContentView = UIView()
-        textContentView.translatesAutoresizingMaskIntoConstraints = false
+        let nameLabel = UILabel()
+        nameLabel.text = name
+        nameLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        nameLabel.textColor = AppColors.primaryText
+        nameLabel.textAlignment = .center
+        nameLabel.numberOfLines = 2
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
         
-        let label = UILabel()
-        label.text = name
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
-        label.textColor = AppColors.primaryText
-        label.textAlignment = .left
-        label.numberOfLines = 2
-        label.translatesAutoresizingMaskIntoConstraints = false
-        textContentView.addSubview(label)
+        let lineColorsStack = UIStackView()
+        lineColorsStack.axis = .horizontal
+        lineColorsStack.spacing = 4
+        lineColorsStack.alignment = .center
+        lineColorsStack.translatesAutoresizingMaskIntoConstraints = false
         
-        card.addSubview(imageView)
-        card.addSubview(textContentView)
-
+        // 根据线路名称获取颜色并创建颜色条
+        for lineId in lines {
+            if let color = TfLLineColors.color(for: lineId.lowercased()) {
+                let colorView = UIView()
+                colorView.backgroundColor = color
+                colorView.layer.cornerRadius = 4
+                colorView.translatesAutoresizingMaskIntoConstraints = false
+                colorView.widthAnchor.constraint(equalToConstant: 25).isActive = true
+                colorView.heightAnchor.constraint(equalToConstant: 10).isActive = true
+                lineColorsStack.addArrangedSubview(colorView)
+            }
+        }
+        
+        let stackView = UIStackView(arrangedSubviews: [nameLabel, lineColorsStack])
+        stackView.axis = .vertical
+        stackView.spacing = 8
+        stackView.alignment = .center
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        card.addSubview(stackView)
         NSLayoutConstraint.activate([
-            imageView.topAnchor.constraint(equalTo: card.topAnchor),
-            imageView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            imageView.heightAnchor.constraint(equalTo: card.heightAnchor, multiplier: 0.7),
-
-            textContentView.topAnchor.constraint(equalTo: imageView.bottomAnchor),
-            textContentView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            textContentView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            textContentView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            
-            label.topAnchor.constraint(equalTo: textContentView.topAnchor, constant: 6),
-            label.leadingAnchor.constraint(equalTo: textContentView.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: textContentView.trailingAnchor, constant: -10),
-            label.bottomAnchor.constraint(lessThanOrEqualTo: textContentView.bottomAnchor, constant: -6)
+            stackView.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            stackView.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            stackView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+            stackView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10)
         ])
-        card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(attractionCardTapped(_:))))
+        
+        card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(stationCardTapped(_:))))
         card.accessibilityLabel = name
         card.accessibilityValue = "\(coord.latitude),\(coord.longitude)"
         return card
     }
 
-    @objc private func attractionCardTapped(_ sender: UITapGestureRecognizer) {
+    @objc private func stationCardTapped(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view,
-              let coordStr = view.accessibilityValue, // Stored as Lat,Lng string
+              let coordStr = view.accessibilityValue,
               let coord = parseCoord(from: coordStr),
               let name = view.accessibilityLabel else { return }
 
-        // Use the coordinates directly instead of trying to geocode the name
         let routePreviewVC = RoutePreviewViewController()
         
         if let startAddr = startTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines),
            !startAddr.isEmpty,
            startAddr.lowercased() != "current location" {
-            // If we have a specific start address, geocode it
             geocodeAddress(startAddr) { [weak self] startCoord in
                 guard let self = self, let sc = startCoord else {
                     self?.showErrorAlert(message: "Could not find starting address: \"\(startAddr)\". Please try again or use current location.")
@@ -1210,30 +1322,13 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
                 self.navigateToPreview(vc: routePreviewVC, start: sc, end: coord, startLabel: startAddr, destLabel: name)
             }
         } else if let current = currentLocation {
-            // Use current location as start
             navigateToPreview(vc: routePreviewVC, start: current, end: coord, startLabel: "Current Location", destLabel: name)
         } else {
             showErrorAlert(message: "Current location is not available. Please ensure location services are enabled or enter a starting address.")
         }
         
-        // Update the destination text field for visual feedback
         destinationTextField.text = name
         updateStartTripButtonState()
-    }
-    
-    private func parseCoord(from string: String) -> CLLocationCoordinate2D? {
-        let parts = string.split(separator: ",")
-        guard parts.count == 2, let lat = Double(parts[0]), let lng = Double(parts[1]) else { return nil }
-        return CLLocationCoordinate2D(latitude: lat, longitude: lng)
-    }
-    
-    private func pushRoute(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D, startLabel: String?, destLabel: String?) {
-        let vc = RoutePreviewViewController() // Ensure RoutePreviewViewController is defined
-        vc.startLocation = start
-        vc.destinationLocation = end
-        vc.startLabelName = startLabel
-        vc.destinationLabelName = destLabel
-        navigationController?.pushViewController(vc, animated: true)
     }
 
     // MARK: - Trip Button Action
@@ -1496,5 +1591,32 @@ extension UITextField {
         let paddingView = UIView(frame: CGRect(x: 0, y: 0, width: amount, height: self.frame.height))
         self.rightView = paddingView
         self.rightViewMode = .always
+    }
+}
+
+// TfL Line Colors
+struct TfLLineColors {
+    static func color(for lineId: String) -> UIColor? {
+        switch lineId {
+        case "bakerloo": return UIColor(red: 0.63, green: 0.35, blue: 0.13, alpha: 1.0) // #995521
+        case "central": return UIColor(red: 0.81, green: 0.17, blue: 0.18, alpha: 1.0) // #CE232A
+        case "circle": return UIColor(red: 0.99, green: 0.82, blue: 0.00, alpha: 1.0) // #FCBF00
+        case "district": return UIColor(red: 0.00, green: 0.44, blue: 0.22, alpha: 1.0) // #00703C
+        case "hammersmith-city": return UIColor(red: 0.96, green: 0.69, blue: 0.79, alpha: 1.0) // #F4AFCB
+        case "jubilee": return UIColor(red: 0.52, green: 0.58, blue: 0.60, alpha: 1.0) // #858D91
+        case "metropolitan": return UIColor(red: 0.54, green: 0.07, blue: 0.34, alpha: 1.0) // #891653
+        case "northern": return UIColor(red: 0.00, green: 0.00, blue: 0.00, alpha: 1.0) // #000000
+        case "piccadilly": return UIColor(red: 0.00, green: 0.22, blue: 0.70, alpha: 1.0) // #0038B3
+        case "victoria": return UIColor(red: 0.00, green: 0.65, blue: 0.87, alpha: 1.0) // #00A3DF
+        case "waterloo-city": return UIColor(red: 0.49, green: 0.80, blue: 0.72, alpha: 1.0) // #7DC3B2
+        case "elizabeth": return UIColor(red: 0.43, green: 0.24, blue: 0.64, alpha: 1.0) // #6F269F
+        case "london-overground": return UIColor(red: 0.91, green: 0.37, blue: 0.00, alpha: 1.0) // #ED8B00
+        case "tfl-rail": return UIColor(red: 0.00, green: 0.11, blue: 0.44, alpha: 1.0) // #001C78 (Elizabeth Line before full opening)
+        case "tramlink": return UIColor(red: 0.53, green: 0.78, blue: 0.00, alpha: 1.0) // #84BD00
+        case "dlr": return UIColor(red: 0.00, green: 0.69, blue: 0.69, alpha: 1.0) // #00B1B4
+        case "emirates-air-line": return UIColor(red: 0.70, green: 0.11, blue: 0.17, alpha: 1.0) // #B20D25
+        case "gondola": return UIColor(red: 0.70, green: 0.11, blue: 0.17, alpha: 1.0) // Same as Emirates Air Line
+        default: return nil
+        }
     }
 }
