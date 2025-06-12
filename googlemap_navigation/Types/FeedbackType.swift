@@ -5,7 +5,6 @@ enum FeedbackType {
     case onTime
     case likelyMissed
     case trainArrivingNow
-    case transferSoon(nextLine: String)
 
     var speechText: String? {
         switch self {

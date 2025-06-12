@@ -45,13 +45,6 @@ class AuditoryFeedbackManager {
             return
         }
 
-        // Check for train delay first
-        if let trainStatus = trainStatus, trainStatus.isDelayed {
-            provideFeedback(.trainDelayed(minutes: trainStatus.delayMinutes))
-            lastFeedbackTime = now
-            return
-        }
-
         // Check for train arrival
         if let trainStatus = trainStatus, trainStatus.arrivalTime < 60 && isInPlatformZone {
             provideFeedback(.trainArrivingNow)
@@ -114,6 +107,11 @@ class AuditoryFeedbackManager {
         
         // Show alert
         viewController.present(alert, animated: true)
+        
+        // Auto dismiss after 10 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak alert] in
+            alert?.dismiss(animated: true)
+        }
     }
 
     func stopFeedback() {
