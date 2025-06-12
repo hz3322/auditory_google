@@ -42,7 +42,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
     /// The destination coordinate for the entire route, passed from the previous screen.
     var routeDestinationCoordinate: CLLocationCoordinate2D? = nil
     var currentWeather: String?
-    var weatherSpeedFactor: Double = 1.0
     
     var walkToStationTimeSec: Double = 0
     var stationToPlatformTimeSec: Double = 120
@@ -509,9 +508,6 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
             pacingManager?.distanceToStation = userOriginLocation.distance(from: stationLocation)
         }
         pacingManager?.timeToDeparture = nextTrainArrivalDate.timeIntervalSince(Date())
-        
-        // Set weather speed factor
-        pacingManager?.updateWeatherFactor(weatherSpeedFactor)
         
         // Handle speed updates
         pacingManager?.onSpeedUpdate = { [weak self] currentSpeed, targetSpeed in
@@ -1417,62 +1413,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
      }
 
     private func estimatedSecondsToStation(for stationName: String) -> TimeInterval {
-        // Check cache first
-        if let cachedTime = estimatedTimeCache[stationName] {
-            return cachedTime
-        }
-        
-        print("🔍 [estimatedSecondsToStation] Starting calculation for station: \(stationName)")
-        
-        // Check if departure point is current location
-        if let currentLocation = locationManager.location?.coordinate,
-           let routeStart = routeStartCoordinate {
-            let distance = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
-                .distance(from: CLLocation(latitude: routeStart.latitude, longitude: routeStart.longitude))
-            
-            // If departure point is not current location, cache and return static time
-            if distance > 100 {
-                print("⚠️ [estimatedSecondsToStation] Departure is not current location, using static time: \(walkToStationTimeSec)")
-                estimatedTimeCache[stationName] = walkToStationTimeSec
-                return walkToStationTimeSec
-            }
-        }
-        
-        let normalizedName = StationNameUtils.normalizeStationName(stationName)
-        var stationCoord = stationCoordinates[normalizedName]
-        
-        if stationCoord == nil {
-            if let fuzzyKey = stationCoordinates.keys.first(where: { 
-                $0.lowercased().contains(normalizedName.lowercased()) || 
-                normalizedName.lowercased().contains($0.lowercased())
-            }) {
-                stationCoord = stationCoordinates[fuzzyKey]
-                print("✅ [estimatedSecondsToStation] Found fuzzy match: \(fuzzyKey)")
-            }
-        }
-        
-        guard let stationCoord = stationCoord else {
-            print("⚠️ [estimatedSecondsToStation] No station coordinate found, using static time: \(walkToStationTimeSec)")
-            estimatedTimeCache[stationName] = walkToStationTimeSec
-            return walkToStationTimeSec
-        }
-        
-        guard let userLocation = locationManager.location else {
-            print("⚠️ [estimatedSecondsToStation] User location not available, using static time: \(walkToStationTimeSec)")
-            estimatedTimeCache[stationName] = walkToStationTimeSec
-            return walkToStationTimeSec
-        }
-
-        let stationLocation = CLLocation(latitude: stationCoord.latitude,
-                                       longitude: stationCoord.longitude)
-        let distanceToStation = userLocation.distance(from: stationLocation)
-        
-        let baseWalkingSpeed: Double = 1.2 // m/s
-        let estimatedWalkTime = distanceToStation / baseWalkingSpeed
-        
-        // Cache the result
-        estimatedTimeCache[stationName] = estimatedWalkTime
-        return estimatedWalkTime
+        // 只用Google API返回的步行时间
+        return walkToStationTimeSec
     }
 
     private func updateUIWithNewLocation(_ location: CLLocation) {
@@ -1690,12 +1632,8 @@ class RouteSummaryViewController: UIViewController, CLLocationManagerDelegate {
 
     // MARK: - Weather Updates
     
-    func updateWeatherInfo(condition: String, speedFactor: Double) {
+    func updateWeatherInfo(condition: String) {
         self.currentWeather = condition
-        self.weatherSpeedFactor = speedFactor
-        
-        // Update PacingManager with new weather factor
-        pacingManager?.updateWeatherFactor(speedFactor)
     }
 }
 

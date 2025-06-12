@@ -40,23 +40,6 @@ enum WeatherCondition: String {
         }
     }
     
-    var speedFactor: Double {
-        switch self {
-        case .clear, .sunny:
-            return 1.0
-        case .clouds:
-            return 0.95
-        case .drizzle, .rain:
-            return 0.8
-        case .snow:
-            return 0.7
-        case .thunderstorm:
-            return 0.6
-        case .mist, .fog, .haze:
-            return 0.9
-        }
-    }
-    
     var backgroundGradient: (start: UIColor, end: UIColor) {
         switch self {
         case .clear, .sunny:

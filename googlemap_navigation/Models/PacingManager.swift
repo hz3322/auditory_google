@@ -47,8 +47,6 @@ class PacingManager: NSObject {
         var averageSpeed: Double = 0.0
         var speedHistory: [Double] = []
         var lastUpdated: Date = Date()
-        var weatherSpeedFactor: Double = 1.0
-        var walkingRecords: [WalkingRecord] = []
         
         mutating func updateSpeed(_ newSpeed: Double) {
             speedHistory.append(newSpeed)
@@ -61,31 +59,30 @@ class PacingManager: NSObject {
         }
         
         func getAdjustedSpeed() -> Double {
-            let baseSpeed = averageSpeed
-            return baseSpeed * weatherSpeedFactor
+            return averageSpeed
         }
         
         // Save walking records to UserDefaults
         func saveWalkingRecords() {
             let encoder = JSONEncoder()
-            if let encoded = try? encoder.encode(walkingRecords) {
+            if let encoded = try? encoder.encode(speedHistory) {
                 UserDefaults.standard.set(encoded, forKey: "walkingRecords")
             }
         }
         
         // Load walking records from UserDefaults
-        static func loadWalkingRecords() -> [WalkingRecord] {
+        static func loadWalkingRecords() -> [Double] {
             if let data = UserDefaults.standard.data(forKey: "walkingRecords"),
-               let records = try? JSONDecoder().decode([WalkingRecord].self, from: data) {
+               let records = try? JSONDecoder().decode([Double].self, from: data) {
                 return records
             }
             return []
         }
         
         // Calculate average speed from walking records
-        static func calculateAverageSpeed(from records: [WalkingRecord]) -> Double {
+        static func calculateAverageSpeed(from records: [Double]) -> Double {
             guard !records.isEmpty else { return 0.0 }
-            let totalSpeed = records.reduce(0.0) { $0 + $1.speed }
+            let totalSpeed = records.reduce(0.0) { $0 + $1 }
             return totalSpeed / Double(records.count)
         }
     }
@@ -108,7 +105,6 @@ class PacingManager: NSObject {
         let duration: TimeInterval    // in seconds
         let date: Date
         let weatherCondition: String
-        let weatherSpeedFactor: Double
         
         var speed: Double {
             return distance / duration
@@ -122,8 +118,8 @@ class PacingManager: NSObject {
         setupMotionTracking()
         
         // Load walking records and initialize average speed
-        userSpeedProfile.walkingRecords = UserSpeedProfile.loadWalkingRecords()
-        userSpeedProfile.averageSpeed = UserSpeedProfile.calculateAverageSpeed(from: userSpeedProfile.walkingRecords)
+        userSpeedProfile.speedHistory = UserSpeedProfile.loadWalkingRecords()
+        userSpeedProfile.averageSpeed = UserSpeedProfile.calculateAverageSpeed(from: userSpeedProfile.speedHistory)
     }
     
     private func setupAudioSession() {
@@ -265,11 +261,6 @@ class PacingManager: NSObject {
         return min(max(adaptiveETA, minETA), maxETA)
     }
     
-    // Update weather factor
-    func updateWeatherFactor(_ factor: Double) {
-        userSpeedProfile.weatherSpeedFactor = factor
-    }
-    
     private func startPacing(forSpeedRatio ratio: Double) {
         // Reset tick count
         tickCount = 0
@@ -347,10 +338,9 @@ class PacingManager: NSObject {
                         distance: distance,
                         duration: finalStats.duration,
                         date: Date(),
-                        weatherCondition: "current", // You might want to get this from WeatherService
-                        weatherSpeedFactor: self?.userSpeedProfile.weatherSpeedFactor ?? 1.0
+                        weatherCondition: "current" // You might want to get this from WeatherService
                     )
-                    self?.userSpeedProfile.walkingRecords.append(record)
+                    self?.userSpeedProfile.speedHistory.append(distance / finalStats.duration)
                     self?.userSpeedProfile.saveWalkingRecords()
                 }
                 

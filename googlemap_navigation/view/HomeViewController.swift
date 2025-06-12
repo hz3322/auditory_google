@@ -1039,12 +1039,12 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
     private func displayStations() {
         guard self.isUILayoutComplete else { 
             print("⚠️ displayStations: UI layout not complete. Aborting.")
-            return
-        }
+                        return
+                    }
                     
         guard let coord = currentLocation else {
             print("ℹ️ Cannot display stations, current location is nil.")
-            DispatchQueue.main.async {
+                    DispatchQueue.main.async {
                 self.nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
                 let noLocationLabel = UILabel()
                 noLocationLabel.text = "Enable location to see nearby tube stations."
@@ -1056,10 +1056,10 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
             return
         }
         
-        guard self.nearAttractionsStack != nil else {
+         guard self.nearAttractionsStack != nil else {
             print("🛑 displayStations: nearAttractionsStack is unexpectedly nil!")
-            return
-        }
+                return
+            }
             
         nearAttractionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         displayedPlaceNames.removeAll()
@@ -1076,7 +1076,7 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         fetchNearbyStations(coord: coord) { [weak self] stations in
             guard let self = self else { return }
             
-            DispatchQueue.main.async {
+                    DispatchQueue.main.async {
                 // 移除加载指示器
                 loadingLabel.removeFromSuperview()
                 
@@ -1110,8 +1110,8 @@ class HomeViewController: UIViewController, CLLocationManagerDelegate, UITextFie
         guard let url = URL(string: urlString) else {
             print("🛑 Error: Invalid TfL API URL")
             completion([])
-            return
-        }
+                    return
+                }
 
         URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
             guard let self = self else { completion([]); return }
